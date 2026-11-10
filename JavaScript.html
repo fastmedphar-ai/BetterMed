@@ -1,0 +1,1207 @@
+<script>
+/* ================= Core ================= */
+const S = { boot: null, page: 'dashboard', quiz: null, media: {}, imp: null, bank: { page: 0, search: '', subject: '', deck: null }, ai: {}, gen: null, chat: [] };
+const view = document.getElementById('view');
+const PIX = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+const L5 = ['A', 'B', 'C', 'D', 'E'];
+const PASS = 75, FLOOR = 50;
+// The 12 PLE subjects in PRC's order since the March 2026 PLE: [name, day, start time]
+const PLE = [
+  ['Physiology', 1, '8:00 AM'], ['Legal Medicine', 1, '11:00 AM'], ['Pathology', 1, '2:00 PM'],
+  ['Biochemistry', 2, '8:00 AM'], ['Anatomy and Histology', 2, '11:00 AM'], ['Microbiology and Parasitology', 2, '2:00 PM'],
+  ['Obstetrics and Gynecology', 3, '8:00 AM'], ['Pediatrics and Nutrition', 3, '11:00 AM'], ['Preventive Medicine', 3, '2:00 PM'],
+  ['Pharmacology and Therapeutics', 4, '8:00 AM'], ['Surgery', 4, '11:00 AM'], ['Medicine', 4, '2:00 PM'],
+];
+const PLE_SUBJECTS = PLE.map(p => p[0]);
+const SEC_PER_ITEM = 72; // 100 items in 2 hours
+const SHORT = { 'Legal Medicine': 'Legal Med', 'Anatomy and Histology': 'Anatomy', 'Microbiology and Parasitology': 'Micro-Para', 'Obstetrics and Gynecology': 'OB-Gyn', 'Pediatrics and Nutrition': 'Pediatrics', 'Preventive Medicine': 'Prev Med', 'Pharmacology and Therapeutics': 'Pharmacology' };
+const short = s => SHORT[s] || s;
+const pidx = n => { const i = PLE_SUBJECTS.indexOf(n); return i < 0 ? 99 : i; };
+const byPle = (a, b) => pidx(a.subject || a.name) - pidx(b.subject || b.name);
+const PLE_RULES = [[/legal|jurisprud|ethic|forensic/, 'Legal Medicine'], [/prevent|community|public health|epidemiol|biostat/, 'Preventive Medicine'], [/pharma/, 'Pharmacology and Therapeutics'], [/patho| path /, 'Pathology'], [/micro|parasit|immunol/, 'Microbiology and Parasitology'], [/biochem/, 'Biochemistry'], [/physio/, 'Physiology'], [/anat|histo|embryo/, 'Anatomy and Histology'], [/pedia|paedia| peds |nutrition/, 'Pediatrics and Nutrition'], [/obstet|gyne| gyn | ob |obgyn/, 'Obstetrics and Gynecology'], [/surg/, 'Surgery'], [/internal|medicine| im /, 'Medicine']];
+function pleName(s) { const t = ' ' + String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim() + ' '; if (!t.trim()) return ''; const r = PLE_RULES.find(x => x[0].test(t)); return r ? r[1] : ''; }
+const BLOOM = ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'];
+const tosOf = s => (S.boot.tos || []).find(t => t.subject === s);
+const areaOpts = (s, sel) => (tosOf(s) ? tosOf(s).areas : []).map(a => `<option value="${a.code}" ${a.code === sel ? 'selected' : ''}>${esc(a.name)} (${a.items} items)</option>`).join('');
+const modeName = m => ({ exam: 'Exam', block: 'PLE block', tutor: 'Tutor' }[m] || 'Tutor');
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const _ta = document.createElement('textarea');
+const strip = h => { _ta.innerHTML = String(h || '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, ' '); return _ta.value.replace(/\s+/g, ' ').trim(); };
+const tone = p => p >= PASS ? 'hi' : p >= FLOOR ? 'mid' : 'lo';
+const J = v => esc(JSON.stringify(v));
+
+function run(fn, ...args) {
+  return new Promise((res, rej) => {
+    if (window.google && google.script && google.script.run) {
+      google.script.run.withSuccessHandler(res).withFailureHandler(e => { toast(e.message || String(e), true); rej(e); })[fn](...args);
+    } else if (window.MOCK && MOCK[fn]) {
+      setTimeout(() => { try { res(MOCK[fn](...args)); } catch (e) { toast(e.message, true); rej(e); } }, 80);
+    } else rej(new Error('No backend: ' + fn));
+  });
+}
+function toast(msg, err) {
+  const d = document.createElement('div'); d.textContent = msg; if (err) d.className = 'err';
+  document.getElementById('toast').appendChild(d); setTimeout(() => d.remove(), 4500);
+}
+function openModal(html) { document.getElementById('modalBox').innerHTML = html; document.getElementById('modal').classList.remove('hidden'); }
+function closeModal() { document.getElementById('modal').classList.add('hidden'); }
+const loading = t => `<div class="card"><span class="spin"></span>${esc(t || 'Loading…')}</div>`;
+
+function md(t) {
+  const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
+  let html = '', list = false;
+  String(t || '').split('\n').forEach(ln => {
+    const l = ln.trim();
+    if (/^([-*•]|\d+[.)])\s+/.test(l)) { if (!list) { html += '<ul>'; list = true; } html += '<li>' + inline(l.replace(/^([-*•]|\d+[.)])\s+/, '')) + '</li>'; return; }
+    if (list) { html += '</ul>'; list = false; }
+    if (!l) return;
+    const h = l.match(/^#{1,6}\s+(.*)/);
+    html += h ? '<h4>' + inline(h[1]) + '</h4>' : '<p>' + inline(l) + '</p>';
+  });
+  return '<div class="md">' + html + (list ? '</ul>' : '') + '</div>';
+}
+
+/* ================= Icons & navigation ================= */
+const svg = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const I = {
+  dashboard: svg('<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>'),
+  maker: svg('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M12 12v6M9 15h6"/>'),
+  analytics: svg('<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 16v-4M12 16V8M16 16v-6"/>'),
+  bank: svg('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/>'),
+  ai: svg('<path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>'),
+  import: svg('<path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>'),
+  settings: svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'),
+  book: svg('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/>'),
+  check: svg('<path d="M20 6 9 17l-5-5"/>'),
+  target: svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>'),
+  cal: svg('<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>'),
+  trophy: svg('<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>'),
+  clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  star: svg('<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>'),
+  up: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="m3 17 6-6 4 4 8-8M15 7h6v6"/></svg>',
+  down: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="m3 7 6 6 4-4 8 8M15 17h6v-6"/></svg>',
+  arrow: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 17 17 7M8 7h9v9"/></svg>',
+  dl: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>',
+};
+const NAV = [
+  ['Main menu', [['dashboard', 'Dashboard'], ['maker', 'Quiz Maker'], ['analytics', 'Results & Analytics'], ['bank', 'Question Bank'], ['ai', 'AI Tutor']]],
+  ['Manage', [['import', 'Import from Anki'], ['settings', 'Settings']]],
+];
+const TITLES = { dashboard: '', maker: 'Quiz Maker', analytics: 'Results & Analytics', bank: 'Question Bank', ai: 'AI Tutor', import: 'Import from Anki', settings: 'Settings' };
+function drawNav() {
+  document.getElementById('nav').innerHTML = NAV.map(([lbl, items]) => `<div class="navlbl">${lbl}</div>` + items.map(([k, l]) =>
+    `<a class="${S.page === k ? 'on' : ''}" onclick="go('${k}')">${I[k]}${l}${k === 'ai' ? '<span class="badge">AI</span>' : ''}</a>`).join('')).join('');
+  const d = daysLeft();
+  document.getElementById('sideFoot').innerHTML = d != null ? `Board exam in<b>${d} days</b>${esc(S.boot.settings.ExamDate)}` : `<a onclick="go('settings')" style="cursor:pointer">Set your exam date for a countdown</a>`;
+}
+function head(title, sub) { document.getElementById('title').textContent = title; document.getElementById('eyebrow').textContent = sub || ''; }
+function daysLeft() { const d = S.boot && S.boot.settings && S.boot.settings.ExamDate; return d ? Math.ceil((new Date(d + 'T00:00:00') - new Date()) / 864e5) : null; }
+function greet() {
+  const h = new Date().getHours(), name = (S.boot.settings.DisplayName || '').trim();
+  return (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (name ? ', ' + name : '');
+}
+function go(p) {
+  if (S.quiz && !S.quiz.done && p !== 'quiz' && !window.confirm('Leave this quiz? Answers in this session will not be saved.')) return;
+  if (p !== 'quiz') S.quiz = null;
+  S.page = p; document.body.classList.remove('nav-open'); drawNav(); setWho();
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  head(p === 'dashboard' ? greet() : TITLES[p] || '', p === 'dashboard' ? today : '');
+  window.scrollTo(0, 0);
+  R[p](view);
+}
+
+/* ================= Widgets ================= */
+function kpi(label, value, unit, icon, cls, chip) {
+  return `<div class="kpi"><div class="l">${esc(label)}</div><span class="ic ${cls}">${I[icon]}</span>
+    <div class="v">${value}${unit ? `<small>${esc(unit)}</small>` : ''}${chip || ''}</div></div>`;
+}
+function deltaChip(trend) {
+  if (trend.length < 2) return '';
+  const k = Math.min(5, Math.floor(trend.length / 2));
+  const avg = a => a.reduce((s, t) => s + t.score, 0) / a.length;
+  const d = Math.round((avg(trend.slice(-k)) - avg(trend.slice(-2 * k, -k))) * 10) / 10;
+  return `<span class="chip ${d >= 0 ? 'up' : 'down'}" title="Last ${k} sessions vs the ${k} before">${d >= 0 ? '+' : ''}${d}% ${d >= 0 ? I.up : I.down}</span>`;
+}
+function smooth(pts) {
+  if (pts.length < 2) return '';
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    d += ` C${p1[0] + (p2[0] - p0[0]) / 6},${p1[1] + (p2[1] - p0[1]) / 6} ${p2[0] - (p3[0] - p1[0]) / 6},${p2[1] - (p3[1] - p1[1]) / 6} ${p2[0]},${p2[1]}`;
+  }
+  return d;
+}
+let _cid = 0;
+function trendChart(trend) {
+  if (!trend.length) return '<div class="empty">Finish a quiz and your scores will appear here.</div>';
+  const id = 'c' + (++_cid), W = 720, H = 250, pl = 34, pr = 8, pt = 40, pb = 28, iw = W - pl - pr, ih = H - pt - pb;
+  const n = trend.length, slot = iw / n, bw = Math.max(8, Math.min(26, slot * 0.46));
+  const x = i => pl + slot * (i + 0.5), y = v => pt + ih * (1 - v / 100);
+  const ma = trend.map((t, i) => { const s = trend.slice(Math.max(0, i - 2), i + 1); return s.reduce((a, b) => a + b.score, 0) / s.length; });
+  const grid = [0, 25, 50, 75, 100].map(v => `<line x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}" stroke="${v === PASS ? '#E3B341' : '#EDF1F6'}" stroke-width="${v === PASS ? 1.6 : 1}" ${v === PASS ? 'stroke-dasharray="6 5"' : ''}/><text x="${pl - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#8590A0">${v}</text>`).join('');
+  const every = Math.ceil(n / 10);
+  const bars = trend.map((t, i) => `<g class="tb" data-i="${i}">
+      <rect x="${x(i) - bw / 2}" y="${pt}" width="${bw}" height="${ih}" rx="${bw / 2}" fill="#F3F5F9"/>
+      <rect x="${x(i) - bw / 2}" y="${Math.min(y(t.score), y(0) - bw)}" width="${bw}" height="${Math.max(bw, y(0) - y(t.score))}" rx="${bw / 2}" fill="#C4D5EA"/>
+      <rect class="hl" x="${x(i) - bw / 2}" y="${Math.min(y(t.score), y(0) - bw)}" width="${bw}" height="${Math.max(bw, y(0) - y(t.score))}" rx="${bw / 2}" fill="#1E3A5F"/>
+      ${i % every === 0 || i === n - 1 ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="11" fill="#8590A0">${esc(t.date)}</text>` : ''}</g>`).join('');
+  const line = `<path d="${smooth(ma.map((v, i) => [x(i), y(v)]))}" fill="none" stroke="#1E3A5F" stroke-width="2.4"/>` +
+    ma.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3.2" fill="#fff" stroke="#1E3A5F" stroke-width="2"/>`).join('');
+  const tips = trend.map((t, i) => {
+    const tx = Math.max(pl + 50, Math.min(W - pr - 50, x(i))), ty = Math.max(2, Math.min(y(t.score), y(0) - bw) - 46);
+    return `<g class="tt" data-i="${i}"><rect x="${tx - 50}" y="${ty}" width="100" height="38" rx="9" fill="#1E3A5F"/>
+      <text x="${tx - 40}" y="${ty + 16}" font-size="10.5" fill="#A9C4E2">Score</text><text x="${tx + 40}" y="${ty + 16}" font-size="11.5" font-weight="800" fill="#fff" text-anchor="end">${t.score}%</text>
+      <text x="${tx - 40}" y="${ty + 30}" font-size="10.5" fill="#A9C4E2">${t.correct} of ${t.total}</text><text x="${tx + 40}" y="${ty + 30}" font-size="10.5" fill="#fff" text-anchor="end">${modeName(t.mode)}</text></g>
+      <rect x="${x(i) - slot / 2}" y="0" width="${slot}" height="${H}" fill="transparent" onmouseenter="hlBar('${id}',${i})"/>`;
+  }).join('');
+  setTimeout(() => hlBar(id, n - 1), 0);
+  return `<div class="chart" id="${id}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Score per session">${grid}${bars}${line}${tips}</svg></div>`;
+}
+function growthChart(trend) {
+  if (trend.length < 2) return '<div class="empty">Two or more sessions draw your growth curve.</div>';
+  const W = 360, H = 200, pl = 30, pr = 12, pt = 46, pb = 24, iw = W - pl - pr, ih = H - pt - pb, n = trend.length;
+  const x = i => pl + iw * i / (n - 1), y = v => pt + ih * (1 - v / 100);
+  const pts = trend.map((t, i) => [x(i), y(t.score)]), line = smooth(pts);
+  const last = trend[n - 1], first = trend[0], d = Math.round((last.score - first.score) * 10) / 10;
+  const lx = x(n - 1), ly = y(last.score), tx = Math.min(W - pr - 38, Math.max(pl + 38, lx));
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Score growth">
+    <defs><linearGradient id="gg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#2B5C8F" stop-opacity=".22"/><stop offset="1" stop-color="#2B5C8F" stop-opacity="0"/></linearGradient></defs>
+    ${[0, 50, 100].map(v => `<line x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}" stroke="#EDF1F6"/><text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end" font-size="10" fill="#8590A0">${v}</text>`).join('')}
+    <line x1="${pl}" x2="${W - pr}" y1="${y(PASS)}" y2="${y(PASS)}" stroke="#E3B341" stroke-dasharray="5 4"/>
+    <rect x="${lx - 14}" y="${pt - 6}" width="28" height="${ih + 6}" rx="8" fill="#E6EEF7"/>
+    <path d="${line} L${x(n - 1)},${y(0)} L${x(0)},${y(0)} Z" fill="url(#gg)"/>
+    <path d="${line}" fill="none" stroke="#1E3A5F" stroke-width="2.4"/>
+    <circle cx="${lx}" cy="${ly}" r="5" fill="#1E3A5F" stroke="#fff" stroke-width="2"/>
+    <rect x="${tx - 38}" y="6" width="76" height="28" rx="8" fill="#1E3A5F"/>
+    <text x="${tx}" y="24.5" text-anchor="middle" font-size="12" font-weight="800" fill="#fff">${d >= 0 ? '+' : ''}${d}%</text>
+    <text x="${x(0)}" y="${H - 4}" font-size="10.5" fill="#8590A0">${esc(first.date)}</text><text x="${x(n - 1)}" y="${H - 4}" font-size="10.5" fill="#2B5C8F" text-anchor="end">Latest</text>
+  </svg><div class="sub">Change from your first to your latest session in this view.</div></div>`;
+}
+function hlBar(id, i) {
+  const el = document.getElementById(id); if (!el) return;
+  el.querySelectorAll('.tb .hl,.tt').forEach(e => e.style.opacity = 0);
+  el.querySelectorAll(`[data-i="${i}"] .hl, .tt[data-i="${i}"]`).forEach(e => e.style.opacity = 1);
+}
+const flag = m => !m.attempts ? '<span class="flag X">New</span>' : m.accuracy < FLOOR ? '<span class="flag C" title="Under the 50% subject floor">Below 50</span>' : m.accuracy < PASS ? '<span class="flag L">Below 75</span>' : '<span class="flag N">Passing</span>';
+function subjList(m, limit) {
+  if (!m.length) return '<div class="empty">Import your Anki deck to see subjects here.</div>';
+  return `<div class="slist">${(limit ? m.slice(0, limit) : m).map(x => `<div class="s"><span class="nm">${esc(x.subject)}${flag(x)}</span><span class="pc ${x.attempts ? tone(x.accuracy) : 'muted'}">${x.attempts ? x.accuracy + '%' : '—'}</span>
+    <div class="track"><i class="bg-${tone(x.accuracy)}" style="width:${x.accuracy}%"></i><b title="75% passing line"></b></div></div>`).join('')}</div>`;
+}
+function ring(t, m) {
+  const N = 60, ok = t.answered ? Math.round(t.correct / t.answered * N) : 0, cx = 75, cy = 75;
+  const ticks = Array.from({ length: N }, (_, i) => {
+    const a = (i / N) * Math.PI * 2 - Math.PI / 2, r1 = 56, r2 = 70;
+    return `<line x1="${cx + r1 * Math.cos(a)}" y1="${cy + r1 * Math.sin(a)}" x2="${cx + r2 * Math.cos(a)}" y2="${cy + r2 * Math.sin(a)}" stroke="${!t.answered ? '#E4E9F0' : i < ok ? '#2B5C8F' : '#E3B341'}" stroke-width="3.2" stroke-linecap="round"/>`;
+  }).join('');
+  const att = m.filter(x => x.attempts), c = k => att.filter(k).length;
+  return `<div class="ringwrap"><svg viewBox="0 0 150 150">${ticks}<text x="75" y="70" text-anchor="middle" font-size="11" fill="#8590A0">Answers</text><text x="75" y="92" text-anchor="middle" font-size="24" font-weight="800" fill="#141C28">${t.answered.toLocaleString()}</text></svg>
+    <div class="rleg"><div style="border-color:#2B5C8F"><span>Correct</span><b>${t.answered ? Math.round(t.correct / t.answered * 100) : 0}%</b></div>
+    <div style="border-color:#E3B341"><span>Wrong</span><b>${t.answered ? 100 - Math.round(t.correct / t.answered * 100) : 0}%</b></div>
+    <div style="border-color:#D6604B"><span>Subjects under 50%</span><b>${c(x => x.accuracy < FLOOR)}</b></div></div></div>`;
+}
+function radar(m) {
+  const s = PLE_SUBJECTS.map(n => m.find(x => x.subject === n) || { subject: n, accuracy: 0, attempts: 0 });
+  const cx = 170, cy = 140, R = 100, n = s.length, ang = i => (i / n) * Math.PI * 2 - Math.PI / 2;
+  const pt = (i, v) => [cx + R * v / 100 * Math.cos(ang(i)), cy + R * v / 100 * Math.sin(ang(i))];
+  const rings = [25, 50, 75, 100].map(v => `<polygon points="${s.map((_, i) => pt(i, v).join(',')).join(' ')}" fill="none" stroke="${v === PASS ? '#E3B341' : '#E4E9F0'}" ${v === PASS ? 'stroke-dasharray="5 4"' : ''}/>`).join('');
+  const spokes = s.map((_, i) => `<line x1="${cx}" y1="${cy}" x2="${pt(i, 100)[0]}" y2="${pt(i, 100)[1]}" stroke="#E4E9F0"/>`).join('');
+  const poly = `<polygon points="${s.map((x, i) => pt(i, Math.max(3, x.accuracy)).join(',')).join(' ')}" fill="rgba(43,92,143,.28)" stroke="#2B5C8F" stroke-width="2"/>`;
+  const labels = s.map((x, i) => { const [lx, ly] = pt(i, 122), a = Math.cos(ang(i)); return `<text x="${lx}" y="${ly + 4}" font-size="11" fill="#475263" text-anchor="${Math.abs(a) < .3 ? 'middle' : a > 0 ? 'start' : 'end'}">${esc(short(x.subject))}</text>`; }).join('');
+  return `<div class="radar"><svg viewBox="-40 0 420 285">${rings}${spokes}${poly}${labels}</svg></div>`;
+}
+function heatmap(h) {
+  if (!h.rows.length) return '<div class="empty">Your subject scores per session will fill this grid.</div>';
+  const col = v => v == null ? '#F1F4F8' : v < 40 ? '#DCE5F0' : v < 60 ? '#A9BCD6' : v < 80 ? '#5B82AE' : '#1E3A5F';
+  const n = h.sessions.length;
+  return `<div style="display:grid;grid-template-columns:minmax(90px,140px) repeat(${n},minmax(18px,1fr));gap:5px;align-items:center">
+    ${h.rows.slice().sort(byPle).map(r => `<div class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(r.subject)}">${esc(short(r.subject))}</div>` + r.cells.map((v, i) => `<div title="${esc(r.subject)}, ${esc(h.sessions[i])}: ${v == null ? 'not in this session' : v + '%'}" style="height:24px;border-radius:6px;background:${col(v)}"></div>`).join('')).join('')}
+    <div></div>${h.sessions.map(d => `<div class="small muted" style="text-align:center;font-size:10.5px">${esc(d)}</div>`).join('')}</div>
+    <div class="legend" style="margin-top:14px">${[['#DCE5F0', '0–40'], ['#A9BCD6', '40–60'], ['#5B82AE', '60–80'], ['#1E3A5F', '80–100'], ['#F1F4F8', 'not taken']].map(([c, l]) => `<span><i class="dot" style="background:${c};border-radius:3px"></i>${l}</span>`).join('')}</div>`;
+}
+function difficulty(d) {
+  const tot = d.easy + d.medium + d.hard;
+  if (!tot) return '<div class="empty">Answer some questions to see how hard your items are.</div>';
+  const seg = [['easy', 'Easy for you', '70%+ correct', '#C8D0DC'], ['medium', 'Difficult', '40–70% correct', '#E3B341'], ['hard', 'Hard', 'under 40% correct', '#D6604B']];
+  return `<div style="display:flex;gap:4px">${seg.map(([k, l, s, c]) => { const p = Math.round(d[k] / tot * 100); return `<div style="flex:${Math.max(p, 24)};min-width:0;border-left:2px solid ${c};padding-left:10px">
+     <div class="big">${p}%</div><div class="small muted">${l}</div>
+     <div style="height:70px;margin:12px 0;background:repeating-linear-gradient(90deg,${c} 0 2.5px,transparent 2.5px 8px);border-radius:3px"></div>
+     <div class="small"><b>${d[k]}</b> items <span class="muted">(${s})</span></div></div>`; }).join('')}</div>`;
+}
+function priorityTable(m) {
+  if (!m.length) return '<div class="empty">No subjects yet.</div>';
+  const P = x => !x.attempts ? ['Start', '#2B5C8F', 'Begin with 20 unseen items', 'unseen'] : x.accuracy < FLOOR ? ['Urgent', '#D6604B', 'Redo mistakes, then 20 tutor items a day', 'wrong'] : x.accuracy < 65 ? ['High', '#B8860B', '15 tutor items a day and read every rationale', 'all'] : x.accuracy < PASS ? ['Medium', '#2B5C8F', '10 timed mixed items a day', 'all'] : ['Low', '#8590A0', 'Keep it warm with one mock block a week', 'all'];
+  return `<table><tr><th>Priority</th><th>Subject</th><th>Where you are</th><th>Next step</th><th>Gap to 75%</th><th></th></tr>
+   ${m.filter(x => x.bank || x.attempts).map(x => { const [p, c, a, pool] = P(x); return `<tr><td style="color:${c};font-weight:800">${p}</td><td style="font-weight:600">${esc(x.subject)}</td>
+     <td>${x.attempts ? `${x.accuracy}% of ${x.attempts} answers` : 'Not started'}<div class="small muted">seen ${Math.min(x.seen, x.bank)} of ${x.bank}</div></td><td>${a}</td>
+     <td>${x.attempts ? (x.accuracy >= PASS ? '<span class="hi">On track</span>' : `+${Math.round((PASS - x.accuracy) * 10) / 10} pts`) : '—'}</td>
+     <td><button class="btn ghost sm" onclick="startQuiz({subjects:${J([x.subject])},count:20,mode:'tutor',pool:'${pool}'})">Drill</button></td></tr>`; }).join('')}</table>`;
+}
+function pleCard(p) {
+  const v = { pass: ['On track to pass', 'hi'], fail: ['Below the passing rule', 'lo'], incomplete: ['Not all 12 subjects tested yet', 'mid'], none: ['No answers yet', 'muted'] }[p.verdict];
+  const chk = (ok, txt) => `<div class="chk ${ok ? 'ok' : ''}">${ok ? I.check : '<i></i>'}<span>${txt}</span></div>`;
+  return `<div class="card"><div class="card-h"><h3>PLE readiness</h3><span class="sub">Last 100 answers per subject</span></div>
+    <div class="row" style="align-items:baseline;gap:12px"><div class="big" style="font-size:40px">${p.ga != null ? p.ga + '%' : '—'}</div><div class="${v[1]}" style="font-weight:800">${v[0]}</div></div>
+    <div class="sub" style="margin:2px 0 10px">Projected general average across ${p.tested} of 12 subjects</div>
+    ${chk(p.ga != null && p.ga >= PASS, 'General average of 75% or higher')}
+    ${chk(p.tested > 0 && p.below50 === 0, 'No subject below 50%' + (p.below50 ? ` (${p.below50} below now)` : ''))}
+    ${chk(p.tested === 12, `All 12 subjects practiced (${p.tested} of 12)`)}
+    <div class="ai-note">PRC passing rule: a general average of at least 75% with no subject below 50%. This projection averages the 12 subjects equally.</div></div>`;
+}
+function pleBoard(p) {
+  return `<div class="pleboard">${[1, 2, 3, 4].map(d => `<div><div class="sub" style="font-weight:800;color:var(--ink);margin-bottom:4px">Day ${d}</div>${p.subjects.filter(x => x.day === d).map(x => `<div class="pb"><div class="row" style="justify-content:space-between;gap:6px;flex-wrap:nowrap"><span class="nm" title="${esc(x.subject)}">${esc(short(x.subject))}</span><span class="pc ${x.recent == null ? 'muted' : tone(x.recent)}">${x.recent == null ? '—' : x.recent + '%'}</span></div>
+    <div class="track"><i class="bg-${tone(x.recent || 0)}" style="width:${x.recent || 0}%"></i><u title="50% floor"></u><b title="75% passing average"></b></div><div class="small muted">${esc(x.time)}, ${x.bank.toLocaleString()} item${x.bank === 1 ? '' : 's'}${x.recentN ? ', last ' + x.recentN + ' answers' : ''}</div></div>`).join('')}</div>`).join('')}</div>`;
+}
+function tagBar(a) {
+  const un = a.tos.reduce((n, s) => n + s.untagged, 0), all = un + a.tos.reduce((n, s) => n + s.areas.reduce((m, x) => m + x.bank, 0), 0);
+  if (!un) return '';
+  return `<div class="warn-note small" style="margin-bottom:14px" id="tagBox"><b>${un.toLocaleString()} of ${all.toLocaleString()} questions</b> aren't tagged to a TOS area yet, so blocks and this breakdown can't use them.
+    <div class="row" style="margin-top:10px"><button class="btn sm" onclick="quickTag(this)">Tag by keywords (free)</button>${S.boot.ai.hasKey ? '<button class="btn ghost sm" onclick="aiTag(this)">Tag the rest with AI</button>' : '<button class="btn ghost sm" onclick="go(\'settings\')">Connect AI to tag the rest</button>'}</div></div>`;
+}
+function tosCard(a) {
+  const s = S.tosSubj && tosOf(S.tosSubj) ? S.tosSubj : (a.tos[0] || {}).subject;
+  const t = a.tos.find(x => x.subject === s); if (!t) return '';
+  const bloom = t.bloom ? `<div class="sub" style="margin:4px 0 6px">How the PLE tests this subject (2025 TOS)</div><div class="bloom">${t.bloom.map((n, i) => n ? `<i style="flex:${n}" title="${BLOOM[i]}: ${n} items"><span>${BLOOM[i]} ${n}</span></i>` : '').join('')}</div>` : '';
+  return `<div class="card-h"><h3>Table of Specifications</h3><select class="inp" style="width:auto;max-width:260px" onchange="S.tosSubj=this.value;document.getElementById('tosCard').innerHTML=tosCard(S.lastAnalytics)">${a.tos.map(x => `<option ${x.subject === s ? 'selected' : ''}>${esc(x.subject)}</option>`).join('')}</select></div>
+    ${tagBar(a)}${bloom}
+    <div style="overflow-x:auto"><table class="tos"><tr><th>TOS area</th><th class="num">On the exam</th><th class="num">In your bank</th><th>Your accuracy</th><th class="num">Est. items lost</th><th></th></tr>
+    ${t.areas.map(x => `<tr><td>${esc(x.name)}</td><td class="num"><b>${x.items}</b></td><td class="num">${x.bank}${x.bank < x.items ? ' <span class="flag L" title="Fewer items in your bank than the exam asks">thin</span>' : ''}</td>
+      <td style="min-width:120px">${x.attempts ? `<div class="row" style="gap:8px;flex-wrap:nowrap"><div class="track" style="flex:1"><i class="bg-${tone(x.accuracy)}" style="width:${x.accuracy}%"></i><u></u><b></b></div><span class="${tone(x.accuracy)}" style="font-weight:800">${x.accuracy}%</span></div>` : '<span class="muted small">not tried</span>'}</td>
+      <td class="num">${x.attempts ? (x.items * (1 - x.accuracy / 100)).toFixed(1) : '—'}</td>
+      <td>${x.bank ? `<button class="btn ghost sm" onclick="startQuiz({subjects:${J([s])},area:'${x.code}',count:20,mode:'tutor',pool:'all'})">Drill</button>` : ''}</td></tr>`).join('')}</table></div>
+    <div class="ai-note">From Board of Medicine Resolution No. 19 s. 2025 (Enhanced Table of Specifications), used from the October 2025 PLE. Est. items lost = items on the exam × your miss rate in that area.</div>`;
+}
+function lostList(a) {
+  const L = [];
+  a.tos.forEach(s => s.areas.forEach(x => { if (x.attempts >= 3) L.push({ s: s.subject, x, lost: x.items * (1 - x.accuracy / 100) }); }));
+  L.sort((p, q) => q.lost - p.lost);
+  if (!L.length) return '<div class="empty">Answer at least 3 tagged questions in an area to see this.</div>';
+  return `<div class="focus">${L.slice(0, 8).map(o => `<div class="f" style="gap:10px"><div style="min-width:0"><div style="font-weight:700">${esc(o.x.name)}</div><div class="small muted">${esc(short(o.s))}: ${o.x.items} items on the exam, you get ${o.x.accuracy}%</div></div>
+    <div class="row" style="flex:none;gap:10px;flex-wrap:nowrap"><span class="lo" style="font-weight:800" title="Estimated items lost">−${o.lost.toFixed(1)}</span><button class="btn ghost sm" onclick="startQuiz({subjects:${J([o.s])},area:'${o.x.code}',count:20,mode:'tutor',pool:'all'})">Drill</button></div></div>`).join('')}</div>
+    <div class="ai-note">Estimated items lost on the real exam if you answered like you do now.</div>`;
+}
+async function quickTag(btn) {
+  btn.disabled = true; btn.textContent = 'Tagging…';
+  const r = await run('tosAutoTag');
+  toast(`Tagged ${r.tagged} question${r.tagged === 1 ? '' : 's'} by keywords. ${r.remaining} left for AI or manual tagging.`);
+  R.analytics(view);
+}
+async function aiTag(btn) {
+  const box = document.getElementById('tagBox'); let total = 0, stop = false;
+  box.innerHTML = '<span class="spin"></span><span id="tagMsg">Tagging with AI…</span> <button class="btn ghost sm" id="tagStop">Stop</button>';
+  document.getElementById('tagStop').onclick = () => { stop = true; };
+  while (!stop) {
+    let r; try { r = await run('aiTagBatch', 30); } catch (e) { break; }
+    total += r.tagged;
+    const m = document.getElementById('tagMsg'); if (m) m.textContent = `Tagged ${total} so far (${r.subject || ''}). ${r.remaining} left…`;
+    if (!r.remaining || !r.tagged) break;
+  }
+  toast(`AI tagged ${total} question${total === 1 ? '' : 's'}.`);
+  R.analytics(view);
+}
+async function setArea(id, code) {
+  const r = await run('setQuestionArea', id, code);
+  const q = (S.bankItems || []).find(x => x.id === id); if (q) { q.area = r.area; q.areaName = r.areaName; }
+  toast(r.area ? 'Tagged to ' + r.areaName : 'Tag removed');
+}
+function startBlock(subject, day, idx) {
+  const have = (S.boot.subjects.find(s => s.name === subject) || {}).count || 0;
+  if (!have) return toast('No ' + subject + ' questions in your bank yet.', true);
+  startQuiz({ subjects: [subject], count: 100, mode: 'exam', pool: 'all', block: true, day: day || null, dayIdx: idx || 0 });
+}
+function startDay(d) {
+  const blocks = PLE.filter(p => p[1] === d), i = blocks.findIndex(p => (S.boot.subjects.find(s => s.name === p[0]) || {}).count);
+  if (i < 0) return toast('No questions yet for any Day ' + d + ' subject.', true);
+  startBlock(blocks[i][0], d, i);
+}
+const SPARK = '<svg class="spark" viewBox="0 0 120 120" fill="none"><path d="M70 10l7 26 26 7-26 7-7 26-7-26-26-7 26-7z" fill="#2B5C8F"/><path d="M30 62l4 13 13 4-13 4-4 13-4-13-13-4 13-4z" fill="#3B74AE"/><circle cx="96" cy="88" r="4" fill="#E3B341"/></svg>';
+function coachCard() {
+  const ai = S.boot.ai || {}, st = S.boot.settings || {};
+  const today = new Date().toLocaleDateString('en-CA');
+  const cached = st.CoachDate === today && st.CoachText;
+  return `<div class="card ai-card" id="coachCard"><div class="card-h"><span class="ai-badge">${I.ai} AI study coach</span>${cached ? `<button class="btn ghost sm" onclick="getCoach(true)">Refresh</button>` : ''}</div>
+    ${!ai.hasKey ? `<p class="small" style="margin:0 0 12px">Connect Gemini or Claude and the coach will turn your numbers into a plan for today.</p><button class="btn sm" onclick="go('settings')">Connect AI</button>`
+      : cached ? md(st.CoachText) + '<div class="ai-note">AI can be wrong. Check facts against your references.</div>'
+      : `<p class="small" style="margin:0 0 12px">Get a plan for today based on your weakest subjects and the days left.</p><button class="btn sm" onclick="getCoach(false)">Get today's plan</button>`}</div>`;
+}
+async function getCoach(force) {
+  const el = document.getElementById('coachCard'); if (el) el.innerHTML = '<span class="spin"></span>Reading your numbers…';
+  try { const r = await run('aiCoach', !!force); S.boot.settings.CoachText = r.text; S.boot.settings.CoachDate = new Date().toLocaleDateString('en-CA'); }
+  catch (e) { }
+  const nel = document.getElementById('coachCard'); if (nel) nel.outerHTML = coachCard();
+}
+
+/* ================= Pages ================= */
+const R = {};
+R.dashboard = async v => {
+  v.innerHTML = loading();
+  const a = await run('getAnalytics'), t = a.totals, d = daysLeft();
+  v.innerHTML = `
+  <div class="kpis">
+    ${kpi('Projected PLE average', a.ple.ga != null ? a.ple.ga + '%' : '—', a.ple.tested ? a.ple.tested + ' of 12 subjects' : 'no answers yet', 'trophy', 't')}
+    ${kpi('Answered at least once', t.seen.toLocaleString(), 'of ' + t.bank.toLocaleString() + ' items', 'check', 'm')}
+    ${kpi('Overall accuracy', t.accuracy + '%', '', 'target', 't', deltaChip(a.trend))}
+    ${d != null ? kpi('Days to the board exam', d, 'days', 'cal', 'c') : kpi('Sessions finished', t.sessions, '', 'cal', 'c')}
+  </div>
+  <div class="grid g-dash">
+    <div class="col">
+      <div class="card"><div class="card-h"><div><h3>Score per session</h3><div class="sub" style="margin-top:4px">Average of the last ${a.trend.length || 0}: <b style="color:var(--ink)">${a.trend.length ? Math.round(a.trend.reduce((s, x) => s + x.score, 0) / a.trend.length) : 0}%</b></div></div>
+        <div class="legend"><span><i class="dot" style="background:#1E3A5F"></i>Score</span><span><i class="dot" style="background:#fff;border:2px solid #1E3A5F;box-sizing:border-box"></i>3-session average</span><span><i class="dot" style="background:#E3B341"></i>75% passing</span></div></div>
+        ${trendChart(a.trend)}</div>
+      <div class="grid g-2">
+        <div class="card"><div class="card-h"><h3>Accuracy by subject</h3><button class="arrow" onclick="go('analytics')" aria-label="Open analytics">${I.arrow}</button></div>${radar(a.mastery)}</div>
+        <div class="card"><div class="card-h"><h3>Result overview</h3><button class="arrow" onclick="go('analytics')" aria-label="Open analytics">${I.arrow}</button></div>${ring(t, a.mastery)}</div>
+      </div>
+    </div>
+    <div class="col">
+      ${pleCard(a.ple)}
+      <div class="hero"><div class="lbl">PLE simulation</div><h3>Practice like it's exam day</h3><p>100 items in 2 hours per subject, in PRC's order of subjects.</p>
+        <button class="btn-w" onclick="go('maker')">Choose a day or block ${I.arrow}</button>${SPARK}</div>
+      ${coachCard()}
+      <div class="card"><div class="card-h"><h3>Focus next on</h3></div>${subjList(a.focus)}
+        ${a.focus.length ? `<button class="btn sm" style="margin-top:12px" onclick="startQuiz({subjects:${J(a.focus.map(x => x.subject))},count:20,mode:'tutor',pool:'all'})">Drill ${a.focus.length > 1 ? 'these ' + a.focus.length : 'this subject'}</button>` : ''}</div>
+      <div class="card"><div class="card-h"><h3>Quick start</h3></div><div class="row">
+        <button class="btn ghost sm" onclick="startQuiz({count:20,mode:'tutor',pool:'all'})">20 random</button>
+        <button class="btn ghost sm" onclick="startQuiz({count:20,mode:'tutor',pool:'unseen'})">20 unseen</button>
+        <button class="btn ghost sm" onclick="startQuiz({count:30,mode:'tutor',pool:'wrong'})">Redo mistakes</button></div></div>
+    </div>
+  </div>`;
+};
+
+R.analytics = async v => {
+  v.innerHTML = loading();
+  const a = await run('getAnalytics'), t = a.totals;
+  S.lastAnalytics = a;
+  const top = a.mastery.filter(x => x.attempts).slice().sort((p, q) => q.accuracy - p.accuracy)[0];
+  const avg = a.trend.length ? Math.round(a.trend.reduce((s, x) => s + x.score, 0) / a.trend.length * 10) / 10 : 0;
+  v.innerHTML = `
+  <div class="row" style="justify-content:space-between;margin:-8px 0 16px"><span class="sub">Everything here comes from the answers you've saved.</span>
+    <button class="btn" onclick="exportReport()">${I.dl} Export report</button></div>
+  <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+    ${kpi('Average score', avg + '%', '', 'target', 'm', deltaChip(a.trend))}
+    ${kpi('Highest score', a.best + '%', '', 'trophy', 't')}
+    ${kpi('Sessions analyzed', t.sessions, '', 'cal', 'm')}
+    ${kpi('Average time per item', a.avgSeconds ? (a.avgSeconds >= 60 ? Math.floor(a.avgSeconds / 60) + 'm ' + (a.avgSeconds % 60) + 's' : a.avgSeconds + 's') : '—', '', 'clock', 't')}
+    ${kpi('Strongest subject', top ? top.accuracy + '%' : '—', top ? top.subject : '', 'star', 'c')}
+  </div>
+  <div class="grid g-dash" style="margin-bottom:18px">
+    <div class="card"><div class="card-h"><h3>PLE subjects by exam day</h3><span class="sub">Red tick 50%, yellow tick 75%</span></div>${pleBoard(a.ple)}</div>
+    ${pleCard(a.ple)}
+  </div>
+  <div class="grid g-dash" style="margin-bottom:18px">
+    <div class="card" id="tosCard">${tosCard(a)}</div>
+    <div class="card"><div class="card-h"><h3>Where you lose the most points</h3></div>${lostList(a)}</div>
+  </div>
+  <div class="grid g-2" style="margin-bottom:18px">
+    <div class="card"><div class="card-h"><h3>Performance by subject</h3><span class="sub">Last ${a.heat.sessions.length} sessions</span></div>${heatmap(a.heat)}</div>
+    <div class="card"><div class="card-h"><h3>Question-level analysis</h3><span class="sub">${(a.difficulty.easy + a.difficulty.medium + a.difficulty.hard).toLocaleString()} items you've tried</span></div>${difficulty(a.difficulty)}</div>
+  </div>
+  <div class="grid g-dash">
+    <div class="card"><div class="card-h"><h3>What to work on</h3><span class="sub">Sorted by weakest first</span></div><div style="overflow-x:auto">${priorityTable(a.mastery)}</div></div>
+    <div class="col">
+      <div class="card"><div class="card-h"><h3>Growth over sessions</h3></div>${growthChart(a.trend)}</div>
+      <div class="hero"><div class="lbl">AI study coach</div><h3>Turn these numbers into a plan</h3><p>The coach reads this page and tells you what to study today.</p>
+        <button class="btn-w" onclick="${S.boot.ai.hasKey ? 'coachModal()' : "go('settings')"}">${S.boot.ai.hasKey ? 'Get my plan' : 'Connect AI'} ${I.arrow}</button>${SPARK}</div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:18px"><div class="card-h"><h3>Recent sessions</h3></div>${a.recent.length ? `<table><tr><th>Date</th><th>Subjects</th><th>Mode</th><th>Correct</th><th style="text-align:right">Score</th></tr>${a.recent.map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.subjects)}</td><td>${modeName(r.mode)}</td><td>${r.correct} of ${r.total}</td><td style="text-align:right;font-weight:800" class="${tone(r.score)}">${r.score}%</td></tr>`).join('')}</table>` : '<div class="muted">No sessions yet.</div>'}</div>`;
+};
+async function coachModal() {
+  openModal('<div style="max-width:560px"><span class="spin"></span>Reading your numbers…</div>');
+  try {
+    const r = await run('aiCoach', false);
+    S.boot.settings.CoachText = r.text; S.boot.settings.CoachDate = new Date().toLocaleDateString('en-CA');
+    openModal(`<div style="max-width:560px"><div class="card-h"><span class="ai-badge">${I.ai} AI study coach</span><button class="btn ghost sm" onclick="closeModal()">Close</button></div>${md(r.text)}<div class="ai-note">AI can be wrong. Check facts against your references.</div></div>`);
+  } catch (e) { closeModal(); }
+}
+function exportReport() {
+  const a = S.lastAnalytics; if (!a) return;
+  const rows = [['Subject', 'Accuracy %', 'Correct', 'Answers', 'Items seen', 'Items in bank']].concat(a.mastery.map(m => [m.subject, m.accuracy, m.correct, m.attempts, Math.min(m.seen, m.bank), m.bank]))
+    .concat([[], ['Session date', 'Mode', 'Correct', 'Total', 'Score %']]).concat(a.trend.map(t => [t.date, t.mode, t.correct, t.total, t.score]));
+  const csv = rows.map(r => r.map(c => '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  link.download = 'BetterMed-report-' + new Date().toLocaleDateString('en-CA') + '.csv'; link.click();
+}
+
+R.maker = v => {
+  const subs = S.boot.subjects.slice().sort(byPle);
+  const cnt = {}; subs.forEach(s => cnt[s.name] = s.count);
+  const sim = `<div class="card"><div class="card-h"><div><h3>Simulate the PLE</h3><div class="sub" style="margin-top:4px">Each subject is one block: 100 items in 2 hours (72 seconds per item), in PRC's current order, with items spread across the TOS areas by their weights. Answers and rationales show when the block ends.</div></div></div>
+    <div class="days">${[1, 2, 3, 4].map(d => `<div class="day"><div class="row" style="justify-content:space-between"><b>Day ${d}</b><button class="btn sm" onclick="startDay(${d})">Start day</button></div>${PLE.map((p, i) => [p, i]).filter(([p]) => p[1] === d).map(([p], k) => `<button class="block" onclick="startBlock(${J(p[0])},${d},${k})"><span>${esc(p[2])}</span><b>${esc(p[0])}</b><small>${(cnt[p[0]] || 0).toLocaleString()} item${cnt[p[0]] === 1 ? '' : 's'} in your bank</small></button>`).join('')}</div>`).join('')}</div></div>`;
+  const m = S.maker || (S.maker = { subjects: [], count: 20, mode: 'tutor', pool: 'all' });
+  const avail = subs.filter(s => !m.subjects.length || m.subjects.includes(s.name)).reduce((n, s) => n + s.count, 0);
+  v.innerHTML = sim + `<div class="grid g-dash"><div class="card"><h3 style="margin-bottom:16px">Custom quiz</h3>
+    <div class="field"><label>Subjects <span class="muted small">(none selected means all)</span></label>
+      <div class="chips">${subs.length ? subs.map(s => `<button class="pickchip ${m.subjects.includes(s.name) ? 'on' : ''}" onclick="toggleSub(${J(s.name)})">${esc(s.name)}<small>${s.count}</small></button>`).join('') : '<span class="muted">No questions yet. Import your Anki deck first.</span>'}</div></div>
+    ${m.subjects.length === 1 && tosOf(m.subjects[0]) ? `<div class="field"><label>TOS area <span class="muted small">(optional)</span></label><select class="inp" style="max-width:460px" onchange="S.maker.area=this.value"><option value="">All areas</option>${areaOpts(m.subjects[0], m.area)}</select></div>` : ''}
+    <div class="field"><label>Number of questions</label><div class="row"><input class="inp" style="max-width:140px" type="number" min="1" max="300" value="${m.count}" onchange="S.maker.count=+this.value"><span class="muted small">${avail} available</span></div></div>
+    <div class="field"><label>Mode</label><div class="seg">${[['tutor', 'Tutor: rationale after each'], ['exam', 'Exam: review at the end']].map(([k, l]) => `<button class="${m.mode === k ? 'on' : ''}" onclick="S.maker.mode='${k}';R.maker(view)">${l}</button>`).join('')}</div></div>
+    <div class="field"><label>Which items</label><div class="seg">${[['all', 'All'], ['unseen', 'Unseen only'], ['wrong', 'Wrong last time']].map(([k, l]) => `<button class="${m.pool === k ? 'on' : ''}" onclick="S.maker.pool='${k}';R.maker(view)">${l}</button>`).join('')}</div></div>
+    <button class="btn" onclick="startQuiz(Object.assign({}, S.maker, { area: S.maker.subjects.length === 1 ? S.maker.area : '' }))" ${subs.length ? '' : 'disabled'}>Start quiz</button></div>
+    <div class="col"><div class="hero"><div class="lbl">Need more items?</div><h3>Let AI write practice questions</h3><p>Pick a subject and topic, review the items, then add the ones you like.</p><button class="btn-w" onclick="go('ai')">Open AI Tutor ${I.arrow}</button>${SPARK}</div></div></div>`;
+};
+function toggleSub(n) { const a = S.maker.subjects, i = a.indexOf(n); i >= 0 ? a.splice(i, 1) : a.push(n); S.maker.area = ''; R.maker(view); }
+
+const deckName = (d, all) => {
+  if (!d.key) return 'Not in a deck';
+  const p = d.key.split('::'), last = p[p.length - 1];
+  return (all || []).some(x => x !== d && x.subject === d.subject && x.key.split('::').pop() === last) ? p.slice(-2).join(' › ') : last;
+};
+function deckGrid(decks) {
+  if (!decks.length) return `<div class="card"><div class="empty">No questions yet. <a href="#" onclick="go('import');return false">Import an Anki deck</a> and each practice test shows up here.</div></div>`;
+  const subs = [...new Set(decks.map(d => d.subject))].sort((a, b) => pidx(a) - pidx(b) || a.localeCompare(b));
+  return subs.map(s => {
+    const ds = decks.filter(d => d.subject === s), tot = ds.reduce((n, d) => n + d.count, 0);
+    return `<div class="card"><div class="card-h"><h3>${esc(s)}</h3><span class="muted small">${ds.length} ${ds.length === 1 ? 'set' : 'sets'}, ${tot.toLocaleString()} items</span></div>
+    <div class="decks">${ds.map(d => { const i = decks.indexOf(d), pct = d.count ? Math.round(d.seen / d.count * 100) : 0;
+      return `<div class="deck" onclick="openDeck(${i})"><div class="row" style="justify-content:space-between;flex-wrap:nowrap;gap:8px"><b class="dname" title="${esc(d.key)}">${esc(deckName(d, decks))}</b>${d.accuracy != null ? `<span class="${tone(d.accuracy)}" style="font-weight:800" title="Score on your latest answer to each item">${d.accuracy}%</span>` : '<span class="pill">New</span>'}</div>
+        <div class="small muted" style="margin:2px 0 8px">${d.count} items, ${d.seen ? d.seen + ' answered' : 'not started'}</div>
+        <div class="progress" title="${pct}% answered"><i style="width:${pct}%"></i></div>
+        <div class="row" style="gap:6px;margin-top:12px;flex-wrap:nowrap"><button class="btn sm" onclick="event.stopPropagation();takeDeck(${i},'exam')">Take test</button><button class="btn ghost sm" onclick="event.stopPropagation();openDeck(${i})">Browse</button><button class="btn ghost sm danger icon" style="margin-left:auto" title="Delete this practice test" aria-label="Delete this practice test" onclick="event.stopPropagation();deleteDeck(${i})">${TRASH_ICON}</button></div></div>`; }).join('')}</div></div>`;
+  }).join('');
+}
+function openDeck(i) { const d = S.decks[i]; Object.assign(S.bank, { deck: d.key, deckSubj: d.subject, page: 0, search: '' }); R.bank(view); }
+function takeDeck(i, mode) {
+  const d = S.decks[i];
+  startQuiz({ subjects: [d.subject], deck: d.key, count: Math.min(d.count, 300), mode: mode === 'exam' ? 'exam' : 'tutor', pool: mode === 'wrong' ? 'wrong' : 'all',
+    ordered: mode !== 'wrong', timed: mode === 'exam', deckLabel: deckName(d, S.decks) });
+}
+const TRASH_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>';
+function deleteDeck(i) {
+  const d = S.decks[i];
+  openModal(`<div style="max-width:440px"><h3 style="margin-top:0">Delete this practice test?</h3>
+    <p><b>${esc(deckName(d, S.decks))}</b> (${esc(d.subject)}) and its <b>${d.count}</b> questions will be removed from your bank${d.seen ? `, along with your answers to them (${d.seen} answered), so they stop counting in your analytics` : ''}.</p>
+    <p class="muted small">They are moved to hidden "Trash Questions" and "Trash Results" sheets in your Google Sheet, so you can still recover them there.</p>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:18px"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn danger" id="delGo" onclick="confirmDeleteDeck(${i})">Delete ${d.count} questions</button></div></div>`);
+}
+async function confirmDeleteDeck(i) {
+  const d = S.decks[i], b = document.getElementById('delGo');
+  b.disabled = true; b.innerHTML = '<span class="spin"></span>Deleting…';
+  try {
+    const r = await run('deleteDeck', d.subject, d.key);
+    closeModal();
+    toast(`Deleted ${deckName(d, S.decks)}: ${r.questions} questions${r.results ? ` and ${r.results} answers` : ''}.`);
+    Object.assign(S.bank, { deck: null, search: '', page: 0 });
+    R.bank(view);
+    run('getBootstrap').then(x => { S.boot = Object.assign(S.boot, x); }).catch(() => {});
+  } catch (e) { b.disabled = false; b.textContent = 'Try again'; }
+}
+function deleteAllDecks() {
+  const n = (S.decks || []).reduce((t, d) => t + d.count, 0);
+  openModal(`<div style="max-width:460px"><h3 style="margin-top:0">Delete your entire question bank?</h3>
+    <p>All <b>${n.toLocaleString()}</b> questions in <b>${(S.decks || []).length}</b> practice tests will be removed, along with every answer, quiz session and AI explanation. Your dashboard and analytics will start from zero.</p>
+    <p class="muted small">Questions, answers and sessions are moved to hidden "Trash" sheets in your Google Sheet, so you can still recover them there.</p>
+    <p class="small" style="margin-bottom:6px">Type <b>DELETE</b> to confirm:</p>
+    <input class="inp" id="delAllTxt" autocomplete="off" oninput="document.getElementById('delAllGo').disabled=this.value.trim()!=='DELETE'">
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:18px"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn danger" id="delAllGo" disabled onclick="confirmDeleteAll()">Delete everything</button></div></div>`);
+  setTimeout(() => { const i = document.getElementById('delAllTxt'); if (i) i.focus(); }, 50);
+}
+async function confirmDeleteAll() {
+  const b = document.getElementById('delAllGo');
+  b.disabled = true; b.innerHTML = '<span class="spin"></span>Deleting…';
+  try {
+    const r = await run('deleteAllQuestions');
+    closeModal();
+    toast(`Question bank cleared: ${r.questions.toLocaleString()} questions${r.results ? `, ${r.results.toLocaleString()} answers` : ''} moved to Trash.`);
+    Object.assign(S.bank, { deck: null, search: '', subject: '', page: 0 });
+    run('getBootstrap').then(x => { S.boot = Object.assign(S.boot, x); }).catch(() => {});
+    R.bank(view);
+  } catch (e) { b.disabled = false; b.textContent = 'Try again'; }
+}
+R.bank = async v => {
+  const b = S.bank, inDeck = b.deck != null;
+  const bar = `<div class="row">
+      <input class="inp" style="flex:1;min-width:200px" placeholder="${inDeck ? 'Search this practice test' : 'Search all questions: text, topic, tag or ID'}" value="${esc(b.search)}" onkeydown="if(event.key==='Enter'){S.bank.search=this.value;S.bank.page=0;R.bank(view)}">
+      ${inDeck ? '' : `<select class="inp" style="width:auto" onchange="S.bank.subject=this.value;S.bank.page=0;R.bank(view)"><option value="">All subjects</option>${S.boot.subjects.slice().sort(byPle).map(s => `<option ${b.subject === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>`}
+    </div>`;
+  if (!inDeck && !b.search) {
+    v.innerHTML = `<div class="card">${bar}</div><div id="deckArea">${loading('Loading your practice tests…')}</div>`;
+    S.decks = await run('getDecks', b.subject || '');
+    document.getElementById('deckArea').innerHTML = deckGrid(S.decks) + (S.decks.length && !b.subject ? `<div class="card"><div class="row" style="justify-content:space-between;gap:12px"><div><b>Delete all practice tests</b><div class="muted small">Clears every question, answer and session so you can start fresh. Moved to hidden Trash sheets first.</div></div><button class="btn ghost danger" onclick="deleteAllDecks()">Delete all</button></div></div>` : '');
+    return;
+  }
+  const di = inDeck ? (S.decks || []).findIndex(x => x.key === b.deck && x.subject === b.deckSubj) : -1, d = S.decks && S.decks[di];
+  const top = inDeck && d ? `<div class="card"><button class="btn ghost sm" onclick="Object.assign(S.bank,{deck:null,search:'',page:0});R.bank(view)">← All practice tests</button>
+    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-top:14px;gap:14px"><div><h2 style="margin:0">${esc(deckName(d, S.decks))}</h2><div class="muted small" style="margin-top:4px">${esc(d.subject)}${d.key ? ', ' + esc(d.key.split('::').join(' › ')) : ''}</div>
+      <div class="small" style="margin-top:8px">${d.count} items, ${d.seen} answered${d.accuracy != null ? `, latest score <b class="${tone(d.accuracy)}">${d.accuracy}%</b>` : ''}</div></div>
+      <div class="row"><button class="btn" onclick="takeDeck(${di},'exam')">Take timed test (${Math.round(d.count * SEC_PER_ITEM / 60)} min)</button><button class="btn ghost" onclick="takeDeck(${di},'tutor')">Tutor mode</button>${d.seen > d.right ? `<button class="btn ghost" onclick="takeDeck(${di},'wrong')">Redo ${d.seen - d.right} wrong</button>` : ''}<button class="btn ghost danger" onclick="deleteDeck(${di})">Delete</button></div></div></div>` : '';
+  v.innerHTML = `${top}<div class="card">${bar}<div id="bankList"><div style="padding:20px 0"><span class="spin"></span>Loading…</div></div></div>`;
+  const r = await run('listQuestions', { search: b.search, subject: inDeck ? b.deckSubj : b.subject, deck: inDeck ? b.deck : null, page: b.page, size: 20 });
+  S.bankItems = r.items;
+  const pages = Math.max(1, Math.ceil(r.total / r.size));
+  document.getElementById('bankList').innerHTML = (r.items.length ? r.items.map((q, i) => `<div class="qitem" onclick="showQ(${i})"><div class="row small muted" style="margin-bottom:5px"><b>${esc(q.id)}</b><span class="pill">${esc(q.subject)}</span>${q.areaName ? esc(q.areaName) : q.topic ? esc(q.topic) : ''}${/ai-generated/.test(q.tags) ? '<span class="ai-badge">AI</span>' : ''}${q.answer ? '' : '<span class="lo">No answer key</span>'}</div><div class="t">${esc(strip(q.question))}</div></div>`).join('') : `<div class="empty">No questions match that search.${b.search && !inDeck ? ' <a href="#" onclick="S.bank.search=\'\';R.bank(view);return false">Back to practice tests</a>' : ''}</div>`)
+    + `<div class="row" style="justify-content:space-between;margin-top:14px"><span class="muted small">${r.total} questions, page ${r.page + 1} of ${pages}</span><span class="row"><button class="btn ghost sm" ${r.page ? '' : 'disabled'} onclick="S.bank.page--;R.bank(view)">Previous</button><button class="btn ghost sm" ${r.page + 1 < pages ? '' : 'disabled'} onclick="S.bank.page++;R.bank(view)">Next</button></span></div>`;
+};
+function showQ(i) {
+  const q = S.bankItems[i];
+  openModal(`<div style="max-width:780px"><div class="row" style="justify-content:space-between;margin-bottom:14px"><span class="row"><b>${esc(q.id)}</b><span class="pill">${esc(q.subject)}</span><span class="muted small">${esc(q.topic)}</span></span><button class="btn ghost sm" onclick="closeModal()">Close</button></div>
+    ${tosOf(q.subject) ? `<div class="field"><label>TOS area</label><select class="inp" style="max-width:460px" onchange="setArea(${J(q.id)},this.value)"><option value="">Not tagged</option>${areaOpts(q.subject, q.area)}</select></div>` : ''}
+    ${questionBlock(q, { reveal: true })}<div data-ai="${esc(q.id)}" style="margin-top:16px"></div></div>`);
+  const box = document.getElementById('modalBox'); hydrate(box); mountAi(box);
+}
+
+R.settings = v => {
+  const st = S.boot.settings || {}, ai = S.boot.ai || {};
+  v.innerHTML = `<div class="grid g-2"><div class="col">
+   <div class="card"><h3 style="margin-bottom:16px">Profile</h3>
+    <div class="field"><label>Your name</label><input class="inp" id="setName" value="${esc(st.DisplayName || '')}" placeholder="e.g. Dr. Tupas"></div>
+    <div class="field"><label>Board exam date</label><input class="inp" id="setDate" type="date" style="max-width:220px" value="${esc(st.ExamDate || '')}"><div class="small muted" style="margin-top:6px">Use the first day of your PLE. PRC sets the dates, so check prc.gov.ph for the official schedule.</div></div>
+    <button class="btn" onclick="saveSet()">Save profile</button></div>
+   <div class="card"><h3 style="margin-bottom:12px">Media folder</h3>${mediaFolderBox()}</div></div>
+   <div class="card ai-card"><div class="card-h"><h3>AI</h3><span class="ai-badge">${I.ai} ${ai.hasKey ? 'Connected' : 'Not connected'}</span></div>
+    <div class="field"><label>Provider</label><div class="seg">${[['gemini', 'Google Gemini'], ['claude', 'Anthropic Claude']].map(([k, l]) => `<button class="${(S.aiProv || ai.provider) === k ? 'on' : ''}" onclick="S.aiProv='${k}';R.settings(view)">${l}</button>`).join('')}</div></div>
+    <div class="field"><label>API key</label><input class="inp" id="aiKey" type="password" autocomplete="off" placeholder="${ai.hasKey ? 'A key is saved. Paste a new one to replace it.' : 'Paste your API key'}">
+      <div class="small muted" style="margin-top:6px">${(S.aiProv || ai.provider) === 'claude' ? 'Get one at console.anthropic.com → API keys (paid, per use).' : 'Get one free at aistudio.google.com → Get API key. The free tier has daily limits.'} The key is stored privately in your Apps Script user properties, not in the Sheet.</div></div>
+    <div class="field"><label>Model <span class="muted small">(leave blank for the default)</span></label><input class="inp" id="aiModel" value="${esc(st.AIModel || '')}" placeholder="${(S.aiProv || ai.provider) === 'claude' ? 'claude-sonnet-5-5' : 'gemini-3.8-flash'}"></div>
+    <div class="row"><button class="btn" onclick="saveAi()">Save AI settings</button>${ai.hasKey ? '<button class="btn ghost" onclick="saveAi(true)">Remove key</button>' : ''}</div>
+    <div class="ai-note" style="margin-top:14px">AI explanations are saved to an "AI" tab in your Sheet, so each item only uses one request. Treat AI output as a study aid and check it against your references.</div></div></div>`;
+};
+async function saveSet() {
+  S.boot.settings = Object.assign(S.boot.settings, await run('saveSettings', { DisplayName: document.getElementById('setName').value, ExamDate: document.getElementById('setDate').value }));
+  setWho(); drawNav(); toast('Profile saved');
+}
+async function saveAi(clear) {
+  S.boot.ai = await run('saveAiSettings', { provider: S.aiProv || S.boot.ai.provider, model: document.getElementById('aiModel').value, key: clear ? '__clear__' : document.getElementById('aiKey').value });
+  S.boot.settings.AIModel = document.getElementById('aiModel').value;
+  toast(clear ? 'AI key removed' : 'AI settings saved'); R.settings(view);
+}
+function mediaFolderBox() {
+  const id = (S.boot.settings || {}).MediaFolderId;
+  return `<p class="muted small" style="margin-top:0">The Google Drive folder holding the pictures and videos from Anki's <b>collection.media</b>. Click Re-index after adding files.</p>
+   <div class="row"><input class="inp" id="mediaUrl" style="flex:1;min-width:220px" placeholder="Paste the Drive folder link" value="${id ? 'https:/' + '/drive.google.com/drive/folders/' + esc(id) : ''}">
+   <button class="btn" onclick="indexMedia(this)">${id ? 'Re-index' : 'Link & index'}</button></div><div id="mediaMsg" class="small" style="margin-top:8px"></div>`;
+}
+async function indexMedia(btn) {
+  btn.disabled = true; const msg = document.getElementById('mediaMsg'); msg.innerHTML = '<span class="spin"></span>Scanning the folder. Large folders can take a minute.';
+  try {
+    const r = await run('indexMediaFolder', document.getElementById('mediaUrl').value);
+    S.boot.settings.MediaFolderId = folderIdFrom(document.getElementById('mediaUrl').value) || S.boot.settings.MediaFolderId;
+    S.media = {}; msg.innerHTML = `<div class="ok-note">Indexed ${r.count} files from “${esc(r.folder)}”.</div>`;
+  } catch (e) { msg.textContent = ''; }
+  btn.disabled = false;
+}
+const folderIdFrom = s => ((String(s).match(/folders\/([\w-]+)/) || [])[1]) || String(s).trim();
+
+/* ================= AI Tutor ================= */
+function aiState(qid) { return S.ai[qid] || (S.ai[qid] = { text: '', loading: false, chat: [] }); }
+function aiPanelHtml(qid) {
+  const st = aiState(qid), ai = S.boot.ai || {};
+  if (!ai.hasKey) return `<div class="ai-card card" style="margin:0"><span class="ai-badge">${I.ai} AI tutor</span><p class="small" style="margin:10px 0 12px">Connect Gemini or Claude to get an explanation of any item.</p><button class="btn sm" onclick="closeModal();go('settings')">Connect AI</button></div>`;
+  if (!st.text && !st.loading) return `<div class="ai-card card" style="margin:0"><span class="ai-badge">${I.ai} AI tutor</span><p class="small" style="margin:10px 0 12px">Why is the answer right, and why are the others wrong?</p><button class="btn sm" onclick="aiExplainUI(${J(qid)})">Explain with AI</button></div>`;
+  if (st.loading && !st.text) return `<div class="ai-card card" style="margin:0"><span class="ai-badge">${I.ai} AI tutor</span><p class="small" style="margin:10px 0 0"><span class="spin"></span>Thinking it through…</p></div>`;
+  return `<div class="ai-card card" style="margin:0"><div class="card-h" style="margin-bottom:6px"><span class="ai-badge">${I.ai} AI tutor</span><button class="btn ghost sm" onclick="aiExplainUI(${J(qid)},true)">Redo</button></div>${md(st.text)}
+    <div class="ai-chat">${st.chat.map(c => `<div class="ai-msg ${c.role}">${c.role === 'ai' ? md(c.text) : esc(c.text)}</div>`).join('')}${st.loading ? '<div class="small"><span class="spin"></span>Thinking…</div>' : ''}</div>
+    <div class="ai-in"><input class="inp" placeholder="Ask a follow-up" onkeydown="if(event.key==='Enter'&&this.value.trim()){aiAskUI(${J(qid)},this.value);this.value=''}"><button class="btn sm" onclick="const i=this.previousElementSibling;if(i.value.trim()){aiAskUI(${J(qid)},i.value);i.value=''}">Ask</button></div>
+    <div class="ai-note">AI can be wrong. Check it against your references.</div></div>`;
+}
+function mountAi(root, qid) {
+  (root || document).querySelectorAll(qid ? `[data-ai="${CSS.escape(qid)}"]` : '[data-ai]').forEach(el => el.innerHTML = aiPanelHtml(el.dataset.ai));
+}
+async function aiExplainUI(qid, force) {
+  const st = aiState(qid); st.loading = true; if (force) { st.text = ''; st.chat = []; } mountAi(document, qid);
+  try { const r = await run('aiExplain', qid, !!force); st.text = r.text; } catch (e) { }
+  st.loading = false; mountAi(document, qid);
+}
+async function aiAskUI(qid, msg) {
+  const st = aiState(qid); st.chat.push({ role: 'user', text: msg }); st.loading = true; mountAi(document, qid);
+  try { const r = await run('aiAsk', qid, msg, [{ role: 'ai', text: st.text }].concat(st.chat.slice(0, -1))); st.chat.push({ role: 'ai', text: r.text }); } catch (e) { st.chat.pop(); }
+  st.loading = false; mountAi(document, qid);
+}
+
+R.ai = v => {
+  const ai = S.boot.ai || {}, g = S.gen || (S.gen = { subject: 'Pharmacology and Therapeutics', topic: '', count: 5, difficulty: 'board level', items: null, keep: [] });
+  const subs = [...new Set(PLE_SUBJECTS.concat(S.boot.subjects.map(s => s.name)))];
+  v.innerHTML = `${!ai.hasKey ? `<div class="hero" style="margin-bottom:18px"><div class="lbl">One-time setup</div><h3 style="max-width:none">Connect Gemini or Claude to use AI</h3><p style="max-width:520px">Paste an API key in Settings. Gemini has a free tier you can get from Google AI Studio.</p><button class="btn-w" onclick="go('settings')">Open Settings ${I.arrow}</button>${SPARK}</div>` : ''}
+  <div class="grid g-dash"><div class="col">
+    <div class="card"><div class="card-h"><h3>Write practice questions</h3><span class="ai-badge">${I.ai} ${esc(ai.model || '')}</span></div>
+      <div class="grid g-2" style="gap:12px"><div class="field" style="margin:0"><label>Subject</label><select class="inp" onchange="S.gen.subject=this.value;S.gen.area='';R.ai(view)">${subs.map(s => `<option ${g.subject === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
+        ${tosOf(g.subject) ? `<div class="field" style="margin:0;grid-column:1/-1"><label>TOS area</label><select class="inp" onchange="S.gen.area=this.value"><option value="">Any area</option>${areaOpts(g.subject, g.area)}</select></div>` : ''}
+        <div class="field" style="margin:0"><label>Topic <span class="muted small">(optional)</span></label><input class="inp" value="${esc(g.topic)}" placeholder="e.g. Antimicrobials, DM in pregnancy" onchange="S.gen.topic=this.value"></div>
+        <div class="field" style="margin:0"><label>How many</label><select class="inp" onchange="S.gen.count=+this.value">${[3, 5, 10].map(n => `<option ${g.count === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+        <div class="field" style="margin:0"><label>Difficulty</label><select class="inp" onchange="S.gen.difficulty=this.value">${['recall', 'board level', 'hard vignettes'].map(n => `<option ${g.difficulty === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div></div>
+      <button class="btn" style="margin-top:16px" ${ai.hasKey ? '' : 'disabled'} onclick="genRun(this)">Write questions</button>
+      <div id="genOut" style="margin-top:18px">${genList()}</div></div>
+  </div><div class="col">${coachCard()}
+    <div class="card ai-card"><div class="card-h"><span class="ai-badge">${I.ai} Ask the tutor</span>${S.chat.length ? '<button class="btn ghost sm" onclick="S.chat=[];R.ai(view)">Clear</button>' : ''}</div>
+      <div class="ai-chat" id="freeChat">${S.chat.length ? S.chat.map(c => `<div class="ai-msg ${c.role}">${c.role === 'ai' ? md(c.text) : esc(c.text)}</div>`).join('') : '<p class="small muted" style="margin:0">Ask about any topic, e.g. "Compare nephritic and nephrotic syndrome" or "Mnemonic for the cranial nerves".</p>'}</div>
+      <div class="ai-in"><input class="inp" id="freeIn" placeholder="Ask anything" ${ai.hasKey ? '' : 'disabled'} onkeydown="if(event.key==='Enter')freeAsk()"><button class="btn sm" ${ai.hasKey ? '' : 'disabled'} onclick="freeAsk()">Ask</button></div></div>
+  </div></div>`;
+};
+async function freeAsk() {
+  const i = document.getElementById('freeIn'), msg = i.value.trim(); if (!msg) return;
+  S.chat.push({ role: 'user', text: msg }); i.value = '';
+  document.getElementById('freeChat').innerHTML = S.chat.map(c => `<div class="ai-msg ${c.role}">${c.role === 'ai' ? md(c.text) : esc(c.text)}</div>`).join('') + '<div class="small"><span class="spin"></span>Thinking…</div>';
+  try { const r = await run('aiAsk', '', msg, S.chat.slice(0, -1)); S.chat.push({ role: 'ai', text: r.text }); } catch (e) { S.chat.pop(); }
+  if (S.page === 'ai') R.ai(view);
+}
+function genList() {
+  const g = S.gen; if (!g.items) return '';
+  if (!g.items.length) return '<div class="warn-note small">The AI did not return usable questions. Try again or change the topic.</div>';
+  return g.items.map((q, i) => `<div class="gen-q ${g.keep[i] ? '' : 'off'}"><label class="row small" style="margin-bottom:10px;font-weight:700"><input type="checkbox" ${g.keep[i] ? 'checked' : ''} onchange="S.gen.keep[${i}]=this.checked;this.closest('.gen-q').classList.toggle('off',!this.checked);genCount()"> Keep question ${i + 1}</label>
+    ${questionBlock({ question: esc(q.question), choices: q.choices.map((c, k) => ({ key: L5[k], html: esc(c) })), answer: q.answer, rationale: esc(q.rationale) }, { reveal: true })}</div>`).join('')
+    + `<div class="row" style="justify-content:space-between"><span class="small muted">Check each item before adding it. AI can make mistakes.</span><button class="btn" id="genAdd" onclick="genSave(this)">Add ${g.keep.filter(Boolean).length} to my bank</button></div>`;
+}
+function genCount() { const b = document.getElementById('genAdd'); if (b) b.textContent = `Add ${S.gen.keep.filter(Boolean).length} to my bank`; }
+async function genRun(btn) {
+  btn.disabled = true; document.getElementById('genOut').innerHTML = '<span class="spin"></span>Writing questions. This takes about 20 seconds.';
+  try { const items = await run('aiGenerate', { subject: S.gen.subject, area: S.gen.area || '', topic: S.gen.topic, count: S.gen.count, difficulty: S.gen.difficulty }); S.gen.items = items; S.gen.keep = items.map(() => true); }
+  catch (e) { S.gen.items = null; }
+  btn.disabled = false; document.getElementById('genOut').innerHTML = genList();
+}
+async function genSave(btn) {
+  const g = S.gen, stamp = Date.now().toString(36);
+  const items = g.items.map((q, i) => g.keep[i] && ({ guid: 'ai-' + stamp + '-' + i, subject: g.subject, topic: g.topic, question: esc(q.question), choices: L5.map((_, k) => q.choices[k] ? esc(q.choices[k]) : ''), answer: q.answer, rationale: esc(q.rationale), tags: 'ai-generated', area: g.area || '' })).filter(Boolean);
+  if (!items.length) return toast('Tick at least one question to add.', true);
+  btn.disabled = true;
+  const r = await run('importRows', items);
+  S.boot = Object.assign(S.boot, await run('getBootstrap'));
+  toast(`Added ${r.added} question${r.added === 1 ? '' : 's'} to ${g.subject}`);
+  g.items = null; document.getElementById('genOut').innerHTML = '';
+}
+
+/* ================= Rich content (HTML + Anki media) ================= */
+function rich(html) {
+  let h = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/\son\w+\s*=\s*(["']).*?\1/gi, '');
+  h = h.replace(/\[sound:([^\]]+)\]/g, (m, n) => `<div class="av" data-av="${esc(n)}"><span class="spin"></span></div>`);
+  h = h.replace(/<(video|audio)\b[^>]*>[\s\S]*?<source[^>]*\ssrc\s*=\s*(["'])(.*?)\2[\s\S]*?<\/\1>/gi, (m, t, q, src) => /^(https?:|data:)/i.test(src) ? m : `<div class="av" data-av="${src}"><span class="spin"></span></div>`);
+  h = h.replace(/<(video|audio)\b[^>]*\ssrc\s*=\s*(["'])(.*?)\2[^>]*>(?:[\s\S]*?<\/\1>)?/gi, (m, t, q, src) => /^(https?:|data:)/i.test(src) ? m : `<div class="av" data-av="${src}"><span class="spin"></span></div>`);
+  h = h.replace(/<img\b([^>]*?)\ssrc\s*=\s*(["'])(.*?)\2/gi, (m, pre, q, src) => /^(https?:|data:)/i.test(src) ? m : `<img${pre} data-media="${src}" src="${PIX}"`);
+  return h;
+}
+async function hydrate(root) {
+  const imgs = [...root.querySelectorAll('img[data-media]')], avs = [...root.querySelectorAll('[data-av]')];
+  imgs.forEach(im => im.onclick = () => openModal(`<img src="${im.src}">`));
+  const names = [...new Set([...imgs.map(i => i.dataset.media), ...avs.map(a => a.dataset.av)])].filter(n => !S.media[n]);
+  if (names.length) {
+    try { Object.assign(S.media, await run('getMediaBatch', names)); } catch (e) { return; }
+  }
+  imgs.forEach(im => {
+    const m = S.media[im.dataset.media];
+    if (m && m.type === 'image') im.src = m.src;
+    else im.outerHTML = `<span class="missing">Missing image: ${esc(im.dataset.media)}</span>`;
+  });
+  avs.forEach(a => {
+    const m = S.media[a.dataset.av];
+    if (!m || m.type === 'missing' || m.type === 'image') a.innerHTML = `<span class="missing">Missing media: ${esc(a.dataset.av)}</span>`;
+    else { a.classList.toggle('audio', m.type === 'audio'); a.innerHTML = `<iframe src="${m.src}" allow="autoplay; fullscreen" allowfullscreen></iframe>`; }
+  });
+}
+
+/* ================= Quiz runner ================= */
+async function startQuiz(opts) {
+  if (S.quiz && !S.quiz.done && !window.confirm('Leave the current quiz?')) return;
+  S.quiz = null;
+  view.innerHTML = loading('Building your quiz…');
+  const r = await run('createQuiz', opts);
+  if (!r.questions.length) { toast(opts.pool === 'wrong' ? 'No wrong answers to redo yet.' : opts.pool === 'unseen' ? "You've seen every item in this selection." : 'No questions match.', true); return go('dashboard'); }
+  S.quiz = { ...r, mode: opts.mode || 'tutor', subjects: opts.subjects || [], started: Date.now(), idx: 0, shownAt: Date.now(), done: false,
+    block: !!opts.block, day: opts.day || null, dayIdx: opts.dayIdx || 0, timeLimit: (opts.block || opts.timed) ? r.questions.length * SEC_PER_ITEM : 0,
+    answers: r.questions.map(() => ({ chosen: null, seconds: 0 })) };
+  S.page = 'quiz'; drawNav();
+  if (opts.deckLabel) head('Practice test: ' + opts.deckLabel, opts.subjects[0] + ', ' + r.questions.length + ' items' + (S.quiz.timeLimit ? ', ' + Math.round(S.quiz.timeLimit / 60) + ' minutes' : ', tutor mode'));
+  else if (S.quiz.block) head('PLE block: ' + opts.subjects[0], (S.quiz.day ? 'Day ' + S.quiz.day + ', ' : '') + r.questions.length + ' items, ' + Math.round(S.quiz.timeLimit / 60) + ' minutes');
+  else head(S.quiz.mode === 'exam' ? 'Mock exam' : 'Tutor session', (opts.subjects && opts.subjects.length ? opts.subjects.join(', ') : 'All subjects') + ', ' + r.questions.length + ' items');
+  drawQuiz();
+}
+function fmtT(s) { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); }
+function tick() {
+  const Q = S.quiz; if (!Q || Q.done) return;
+  const el = document.getElementById('clock'); if (!el) return;
+  const s = (Date.now() - Q.started) / 1000;
+  if (!Q.timeLimit) { el.textContent = fmtT(s); return; }
+  const left = Q.timeLimit - s; el.textContent = fmtT(left); el.classList.toggle('lo', left < 600);
+  const pe = document.getElementById('pace');
+  if (pe) { const done = Q.answers.filter(a => a.chosen).length, exp = Math.floor(s / SEC_PER_ITEM); pe.textContent = done >= exp ? 'On pace (72 seconds per item)' : (exp - done) + ' items behind the 72-second pace'; }
+  if (left <= 0 && !Q.autoDone) { Q.autoDone = true; closeModal(); toast("Time's up. Scoring this block."); submitQuiz(); }
+}
+setInterval(tick, 1000);
+function logTime() { const Q = S.quiz; Q.answers[Q.idx].seconds += (Date.now() - Q.shownAt) / 1000; Q.shownAt = Date.now(); }
+
+function questionBlock(q, o) {
+  const reveal = o.reveal, chosen = o.chosen;
+  const ch = q.choices.map(c => {
+    let cls = '';
+    if (reveal) { if (c.key === q.answer) cls = 'right'; else if (c.key === chosen) cls = 'wrong'; }
+    else if (c.key === chosen) cls = 'sel';
+    return `<button class="choice ${cls}" ${o.onPick && !reveal ? `onclick="${o.onPick}('${c.key}')"` : 'disabled'}><span class="key">${c.key}</span><span class="rich">${rich(c.html)}</span></button>`;
+  }).join('');
+  let fb = '';
+  if (reveal) {
+    const v = !q.answer ? '<span class="mid">This card has no answer key. Check the rationale.</span>' : !chosen ? (o.onPick === undefined && o.chosen === undefined ? `<span class="hi">Answer: ${q.answer}</span>` : `<span class="muted">Not answered. The answer is ${q.answer}.</span>`) : chosen === q.answer ? '<span class="hi">Correct</span>' : `<span class="lo">Incorrect. The answer is ${q.answer}.</span>`;
+    fb = `<div class="verdict">${v}</div>${q.rationale ? `<div class="rat rich">${rich(q.rationale)}</div>` : ''}`;
+  }
+  return `<div class="stem rich">${rich(q.question)}</div><div class="choices">${ch}</div>${fb}`;
+}
+
+function drawQuiz() {
+  const Q = S.quiz, q = Q.questions[Q.idx], a = Q.answers[Q.idx], n = Q.questions.length;
+  const reveal = Q.mode === 'tutor' && !!a.chosen, done = Q.answers.filter(x => x.chosen).length;
+  view.innerHTML = `<div class="grid g-quiz">
+   <div><div class="card">
+     <div class="qhead"><span class="count">Question ${Q.idx + 1} of ${n}</span><span class="pill">${esc(q.subject)}</span>${q.areaName || q.topic ? `<span class="muted small">${esc(q.areaName || q.topic)}</span>` : ''}<div class="progress"><i style="width:${done / n * 100}%"></i></div></div>
+     ${questionBlock(q, { chosen: a.chosen, reveal, onPick: 'pick' })}</div>
+     <div class="qnav"><button class="btn ghost" ${Q.idx ? '' : 'disabled'} onclick="jump(${Q.idx - 1})">Previous</button>
+       <span class="kbd">Press A to E to answer, arrow keys to move</span>
+       ${Q.idx + 1 < n ? `<button class="btn" onclick="jump(${Q.idx + 1})">Next</button>` : `<button class="btn mus" onclick="finishQuiz()">Finish and score</button>`}</div></div>
+   <div class="col">
+     <div class="card"><div class="card-h"><div><div class="sub">${Q.timeLimit ? 'Time left' : 'Time'}</div><div class="timer" id="clock">0:00</div>${Q.timeLimit ? '<div class="sub" id="pace"></div>' : ''}</div><button class="btn ghost sm" onclick="finishQuiz()">Finish</button></div>
+       <div class="sub" style="margin-bottom:10px">${done} of ${n} answered</div>
+       <div class="palette">${Q.answers.map((x, i) => { let c = ''; if (x.chosen) c = Q.mode === 'tutor' ? (x.chosen === Q.questions[i].answer ? 'ok' : 'no') : 'ans'; return `<button class="${c} ${i === Q.idx ? 'cur' : ''}" onclick="jump(${i})">${i + 1}</button>`; }).join('')}</div></div>
+     ${Q.mode === 'tutor' ? (reveal ? `<div data-ai="${esc(q.id)}"></div>` : `<div class="card ai-card"><span class="ai-badge">${I.ai} AI tutor</span><p class="small muted" style="margin:10px 0 0">Answer first. Then you can ask AI to explain the item.</p></div>`) : `<div class="card"><p class="small muted" style="margin:0">Exam mode hides answers and AI help until you finish.</p></div>`}
+   </div></div>`;
+  tick(); hydrate(view); mountAi(view);
+}
+function pick(k) { const Q = S.quiz, a = Q.answers[Q.idx]; if (Q.mode === 'tutor' && a.chosen) return; a.chosen = k; drawQuiz(); }
+function jump(i) { const Q = S.quiz; if (!Q || i < 0 || i >= Q.questions.length) return; logTime(); Q.idx = i; drawQuiz(); window.scrollTo(0, 0); }
+document.addEventListener('keydown', e => {
+  if (S.page !== 'quiz' || !S.quiz || S.quiz.done || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  const k = e.key.toUpperCase(), q = S.quiz.questions[S.quiz.idx];
+  if (L5.includes(k) && q.choices.some(c => c.key === k)) pick(k);
+  else if (e.key === 'ArrowRight' || e.key === 'Enter') jump(S.quiz.idx + 1);
+  else if (e.key === 'ArrowLeft') jump(S.quiz.idx - 1);
+});
+function finishQuiz() {
+  const Q = S.quiz, left = Q.answers.filter(a => !a.chosen).length;
+  openModal(`<div style="max-width:420px"><h3 style="margin-top:0">Finish this session?</h3><p>${left ? `<b>${left}</b> unanswered item${left > 1 ? 's' : ''} will count as wrong.` : 'You answered every item.'}</p>
+   <div class="row" style="justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Keep going</button><button class="btn" onclick="closeModal();submitQuiz()">Finish and score</button></div></div>`);
+}
+async function submitQuiz() {
+  const Q = S.quiz; logTime(); Q.done = true;
+  view.innerHTML = loading('Saving your results…');
+  const r = await run('submitSession', { sessionId: Q.sessionId, mode: Q.block ? 'block' : Q.mode, subjects: Q.subjects, started: Q.started,
+    answers: Q.questions.map((q, i) => ({ id: q.id, chosen: Q.answers[i].chosen, seconds: Math.round(Q.answers[i].seconds) })) });
+  S.result = r; head(Q.block ? 'Block results: ' + Q.subjects[0] : 'Session results', `${Q.block ? 'PLE block' : Q.mode === 'exam' ? 'Mock exam' : 'Tutor session'}, ${Math.round((Date.now() - Q.started) / 60000)} minutes`); drawResults(false);
+}
+function nextHero(Q, r) {
+  const nx = Q.day ? PLE.filter(p => p[1] === Q.day)[Q.dayIdx + 1] : null;
+  if (nx) return `<div class="hero"><div class="lbl">Day ${Q.day}, next block at ${esc(nx[2])}</div><h3>${esc(nx[0])}</h3><p>On exam day there is a one-hour break between blocks. Start when you're ready.</p><button class="btn-w" onclick="startBlock(${J(nx[0])},${Q.day},${Q.dayIdx + 1})">Start next block ${I.arrow}</button>${SPARK}</div>`;
+  return `<div class="hero"><div class="lbl">Next step</div><h3>Redo the ones you missed</h3><p>${r.total - r.correct} item${r.total - r.correct === 1 ? '' : 's'} to review while it's fresh.</p><button class="btn-w" onclick="startQuiz({subjects:${J(Q.subjects)},count:30,mode:'tutor',pool:'wrong'})">Redo mistakes ${I.arrow}</button>${SPARK}</div>`;
+}
+function drawResults(onlyWrong) {
+  const Q = S.quiz, r = S.result;
+  const by = {};
+  Q.questions.forEach((q, i) => { const b = by[q.subject] || (by[q.subject] = { n: 0, c: 0 }); b.n++; if (Q.answers[i].chosen === q.answer) b.c++; });
+  const list = Q.questions.map((q, i) => ({ q, i, a: Q.answers[i] })).filter(x => !onlyWrong || x.a.chosen !== x.q.answer);
+  view.innerHTML = `
+  <div class="grid g-dash" style="margin-bottom:18px">
+   <div class="grid g-2">
+    <div class="card" style="margin:0"><div class="sub">Your score</div><div class="score-big" style="margin:6px 0 8px">${r.score}%</div><div class="muted">${r.correct} of ${r.total} correct. ${r.score >= PASS ? 'At or above the 75% passing average.' : `${Math.round((PASS - r.score) * 10) / 10} points below 75%.`}${r.score < FLOOR ? ' Below the 50% floor for a single subject.' : ''}</div>
+      <div class="row" style="margin-top:18px"><button class="btn" onclick="go('dashboard')">Back to dashboard</button><button class="btn ghost" onclick="go('analytics')">See analytics</button></div></div>
+    <div class="card" style="margin:0"><h3 style="margin-bottom:10px">By subject</h3>${subjList(Object.keys(by).map(s => ({ subject: s, attempts: by[s].n, accuracy: Math.round(by[s].c / by[s].n * 100), bank: 1, seen: 1 })))}</div>
+   </div>
+   ${nextHero(Q, r)}
+  </div>
+  <div class="card"><div class="card-h"><h3>Review</h3>
+    <div class="seg"><button class="${onlyWrong ? '' : 'on'}" onclick="drawResults(false)">All</button><button class="${onlyWrong ? 'on' : ''}" onclick="drawResults(true)">Wrong only</button></div></div>
+    ${list.length ? list.map(x => `<div class="rv"><div class="row small muted" style="margin-bottom:10px"><b>#${x.i + 1}</b><span class="pill">${esc(x.q.subject)}</span>${esc(x.q.id)}</div>${questionBlock(x.q, { chosen: x.a.chosen, reveal: true, onPick: null })}<div data-ai="${esc(x.q.id)}" style="margin-top:14px;max-width:760px"></div></div>`).join('') : '<div class="empty">Nothing wrong. Nice work.</div>'}
+  </div>`;
+  hydrate(view); mountAi(view);
+}
+
+/* ================= Anki import ================= */
+R.import = v => {
+  v.innerHTML = `<div class="steps">
+  <div class="card step" data-n="1"><h3>Get your Anki deck file</h3>
+    <ol class="small" style="line-height:1.8;margin:0;padding-left:18px">
+      <li><b>Easiest:</b> use the deck's <b>.apkg</b> file, the one you downloaded or were sent. Pictures and videos come with it.</li>
+      <li>Or in Anki: <b>File → Export…</b> → <b>Anki Deck Package (.apkg)</b>, tick <b>Include media</b>.</li>
+      <li>A plain-text export (<b>Notes in Plain Text (.txt)</b>) also works, but then you upload the media yourself in step 3.</li>
+    </ol></div>
+  <div class="card step" data-n="2"><h3>Load the deck and map the fields</h3>
+    <label class="small" style="display:flex;gap:8px;align-items:flex-start;margin-bottom:12px;cursor:pointer"><input type="checkbox" ${S.withMedia ? 'checked' : ''} onchange="S.withMedia=this.checked" style="margin-top:3px"><span><b>Also save pictures & videos to Google Drive.</b> Leave this off to import just the questions (fast). Turn it on later and import the same decks again to add the media; questions update instead of duplicating, and files already in Drive are skipped. Big decks can take hours.</span></label>
+    <label class="drop" style="display:block;cursor:pointer"><input type="file" multiple accept=".apkg,.colpkg,.txt,.csv,.tsv" style="display:none" onchange="loadAnkiMany(this.files);this.value=''">
+      <b>Choose your Anki deck(s) (.apkg or .txt)</b><div class="muted small">Pick one deck to check the field mapping first, or select several at once (Ctrl+A in the folder) to import them all in a row with the automatic mapping. Big decks can take a minute to open; keep this tab open until it says finished.</div></label>
+    <div id="mapArea"></div></div>
+  <div class="card step" data-n="3"><h3>Pictures & videos</h3>
+    <p class="small" style="margin-top:0">With an <b>.apkg</b>, BetterMed saves the pictures and videos your cards use to a <b>BetterMed media</b> folder in your Google Drive when you import. Nothing to do here.</p>
+    <p class="small">With a <b>.txt</b> export: Anki keeps media in a folder called <b>collection.media</b> (Anki → <b>Tools → Check Media</b> shows it). Upload the files your cards use into one Google Drive folder, then link it here.</p>
+    ${mediaFolderBox()}</div>
+  </div>`;
+  if (S.imp) drawMapping();
+};
+
+function parseDelimited(s, sep) {
+  const rows = []; let row = [], f = '', q = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) { if (c === '"') { if (s[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"' && f === '') q = true;
+    else if (c === sep) { row.push(f); f = ''; }
+    else if (c === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
+    else if (c !== '\r') f += c;
+  }
+  if (f !== '' || row.length) { row.push(f); rows.push(row); }
+  return rows;
+}
+function parseAnki(text) {
+  const lines = text.replace(/^﻿/, '').split('\n');
+  const meta = { sep: '\t' }; let i = 0;
+  while (i < lines.length && lines[i].startsWith('#')) {
+    const m = lines[i].match(/^#([^:]+):(.*)$/);
+    if (m) {
+      const k = m[1].trim().toLowerCase(), val = m[2].trim();
+      if (k === 'separator') meta.sep = { tab: '\t', comma: ',', semicolon: ';', space: ' ', pipe: '|', colon: ':' }[val.toLowerCase()] || val;
+      else if (/ column$/.test(k)) meta[k.replace(/ column$/, '')] = parseInt(val, 10) - 1;
+      else if (k === 'columns') meta.columns = val;
+    }
+    i++;
+  }
+  if (meta.columns) meta.columns = meta.columns.split(meta.sep);
+  const rows = parseDelimited(lines.slice(i).join('\n'), meta.sep).filter(r => r.some(x => x.trim()));
+  return { meta, rows };
+}
+
+const ROLES = [['ignore', '— ignore —'], ['question', 'Question / stem'], ['A', 'Choice A'], ['B', 'Choice B'], ['C', 'Choice C'], ['D', 'Choice D'], ['E', 'Choice E'], ['choices', 'All choices in one field'], ['answer', 'Answer / correct key'], ['rationale', 'Rationale / explanation'], ['extra', 'Extra (add to rationale)'], ['subject', 'Subject'], ['topic', 'Topic'], ['tags', 'Tags'], ['guid', 'Anki ID (GUID)'], ['deck', 'Deck name'], ['notetype', 'Note type']];
+
+function autoMap(meta, rows) {
+  const n = Math.max(...rows.slice(0, 100).map(r => r.length));
+  const roles = Array(n).fill('ignore');
+  ['guid', 'deck', 'tags', 'notetype'].forEach(k => { if (meta[k] != null && meta[k] < n) roles[meta[k]] = k; });
+  (meta.columns || []).forEach((nm, i) => {
+    if (roles[i] !== 'ignore') return;
+    const s = nm.toLowerCase().replace(/[_\-.:]+/g, ' ').replace(/\s+/g, ' ').trim(); let m;
+    if ((m = s.match(/^(?:choice|option|opt|answer|ans|letter|q)\s?([a-e1-5])$/) || s.match(/^\(?([a-e])\)?$/))) roles[i] = isNaN(m[1]) ? m[1].toUpperCase() : L5[+m[1] - 1];
+    else if (/^(front|questions?|stem|text|q|vignette|item|case)$/.test(s) || (/\b(question|stem|vignette)\b/.test(s) && !/\b(answer|explanation|rationale|image|images|source)\b/.test(s))) roles[i] = 'question';
+    else if (/^(answers?|correct|key|ans)$/.test(s) || /\b(correct|right)\b/.test(s) || /^answer (key|letter)$/.test(s)) roles[i] = 'answer';
+    else if (/(images?|pictures?|photos?|figures?|media|videos?)/.test(s)) roles[i] = 'extra';
+    else if (/(rationale|explanation|discussion|back|extra|notes?|sources?)/.test(s)) roles[i] = roles.includes('rationale') ? 'extra' : 'rationale';
+  });
+  const free = () => roles.map((r, i) => r === 'ignore' ? i : -1).filter(i => i >= 0);
+  const samples = i => rows.slice(0, 40).map(r => strip(r[i] || '')).filter(Boolean);
+  if (!roles.includes('question') && free().length) roles[free()[0]] = 'question';
+  if (!roles.includes('answer')) {
+    // pick the column whose values best resolve to a choice letter
+    const qi = roles.indexOf('question'), letterCols = L5.map(L => roles.indexOf(L));
+    const rowChoices = rows.slice(0, 40).map(r => letterCols.some(i => i >= 0) ? letterCols.map(i => i >= 0 ? r[i] || '' : '') : splitChoices(qi >= 0 ? r[qi] : '').choices);
+    let best = null, bestScore = 0;
+    free().forEach(i => {
+      const vals = rows.slice(0, 40).map(r => r[i] || '');
+      const filled = vals.filter(v => strip(v)).length; if (!filled) return;
+      const hits = vals.filter((v, k) => strip(v).length < 200 && normAnswer(v, rowChoices[k])).length;
+      const sc = hits / filled; if (sc > bestScore) { bestScore = sc; best = i; }
+    });
+    if (best != null && bestScore >= 0.5) roles[best] = 'answer';
+  }
+  if (!roles.includes('rationale')) {
+    const avg = i => { const s = samples(i); return s.length ? s.reduce((a, b) => a + b.length, 0) / s.length : 0; };
+    const c = free().sort((a, b) => avg(b) - avg(a))[0];
+    if (c != null && avg(c) > 40) roles[c] = 'rationale';
+  }
+  return roles;
+}
+
+/* ---------- .apkg (Anki deck package) ---------- */
+const LIBS = {
+  zip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+  sql: 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js',
+  sqlAsm: 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-asm.js',
+  zstd: 'https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.js',
+  zipjs: 'https:/' + '/cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.52/dist/zip.min.js'
+};
+/* Opens an .apkg without loading the whole file into memory, so multi-GB decks work. Falls back to JSZip. */
+async function openZip(file) {
+  try {
+    await loadScript(LIBS.zipjs);
+    const Z = window.zip; Z.configure({ useWebWorkers: false });
+    const entries = await new Z.ZipReader(new Z.BlobReader(file)).getEntries();
+    const map = new Map(entries.filter(e => !e.directory).map(e => [e.filename, e]));
+    return { file: n => { const e = map.get(n); return e ? { size: e.uncompressedSize, async: () => e.getData(new Z.Uint8ArrayWriter()) } : null; } };
+  } catch (e) {
+    if (file.size > 1.9e9) throw new Error('This deck is too big for the browser to open (' + (file.size / 1e9).toFixed(1) + ' GB). Check your internet connection and try again.');
+    await loadScript(LIBS.zip);
+    return JSZip.loadAsync(file);
+  }
+}
+const _libs = {};
+function loadScript(src) {
+  return _libs[src] || (_libs[src] = new Promise((ok, no) => {
+    const s = document.createElement('script'); s.src = src; s.onload = ok;
+    s.onerror = () => { delete _libs[src]; no(new Error('Could not load a helper library. Check your internet connection and try again.')); };
+    document.head.appendChild(s);
+  }));
+}
+async function getSQL() {
+  if (window.__SQL) return window.__SQL;
+  try { await loadScript(LIBS.sql); window.__SQL = await initSqlJs({ locateFile: f => LIBS.sql.replace(/[^/]+$/, f) }); }
+  catch (e) { await loadScript(LIBS.sqlAsm); window.__SQL = await initSqlJs(); }
+  return window.__SQL;
+}
+const isZstd = u => u && u.length > 4 && u[0] === 0x28 && u[1] === 0xB5 && u[2] === 0x2F && u[3] === 0xFD;
+async function unz(u) { if (!isZstd(u)) return u; await loadScript(LIBS.zstd); return fzstd.decompress(u); }
+function pbMedia(u) { // Anki 2.1.50+ media list (protobuf): repeated MediaEntry{1:name, 255:legacy zip name}
+  let p = 0; const out = [], td = new TextDecoder();
+  const vint = () => { let x = 0, s = 0, b; do { b = u[p++]; x += (b & 127) * 2 ** s; s += 7; } while (b & 128 && p < u.length); return x; };
+  const skip = wt => { if (wt === 0) vint(); else if (wt === 1) p += 8; else if (wt === 2) { const l = vint(); p += l; } else if (wt === 5) p += 4; else p = u.length; };
+  while (p < u.length) {
+    const tag = vint(), f = Math.floor(tag / 8), wt = tag & 7;
+    if (f === 1 && wt === 2) {
+      const end = vint() + p, e = { name: '', zip: null };
+      while (p < end) {
+        const t2 = vint(), f2 = Math.floor(t2 / 8), w2 = t2 & 7;
+        if (f2 === 1 && w2 === 2) { const l = vint(); e.name = td.decode(u.subarray(p, p + l)); p += l; }
+        else if (f2 === 255 && w2 === 0) e.zip = vint();
+        else skip(w2);
+      }
+      p = end; out.push(e);
+    } else skip(wt);
+  }
+  return out;
+}
+async function readApkg(file) {
+  const zip = await openZip(file);
+  const pick = ['collection.anki21b', 'collection.anki21', 'collection.anki2'].find(n => zip.file(n));
+  if (!pick) throw new Error('That file has no Anki collection inside. Is it an .apkg from Anki?');
+  const SQL = await getSQL();
+  const db = new SQL.Database(await unz(await zip.file(pick).async('uint8array')));
+  const q = sql => { const r = db.exec(sql)[0]; return r ? r.values : []; };
+  const tables = new Set(q("select name from sqlite_master where type='table'").map(r => r[0]));
+  const types = {}, decks = {};
+  if (tables.has('notetypes')) {
+    q('select id, name from notetypes').forEach(([id, nm]) => { types[id] = { name: nm, fields: [] }; });
+    q('select ntid, ord, name from fields order by ntid, ord').forEach(([id, o, nm]) => { if (types[id]) types[id].fields[o] = nm; });
+    q('select id, name from decks').forEach(([id, nm]) => { decks[id] = String(nm).replace(/\x1f/g, '::'); });
+  } else {
+    const [m, d] = q('select models, decks from col')[0];
+    Object.values(JSON.parse(m)).forEach(t => { types[t.id] = { name: t.name, fields: t.flds.slice().sort((a, b) => a.ord - b.ord).map(f => f.name) }; });
+    Object.values(JSON.parse(d)).forEach(x => { decks[x.id] = x.name; });
+  }
+  const notes = q('select n.guid, n.mid, n.tags, n.flds, (select did from cards c where c.nid = n.id order by c.ord limit 1) from notes n order by n.id');
+  db.close();
+  const rows = [], colsByType = {};
+  notes.forEach(([guid, mid, tags, flds, did]) => {
+    const t = types[mid] || { name: 'Note type ' + mid, fields: [] };
+    const f = String(flds).split('\x1f');
+    if (!colsByType[t.name]) colsByType[t.name] = ['Anki ID', 'Note type', 'Deck', 'Tags'].concat(f.map((_, i) => t.fields[i] || 'Field ' + (i + 1)));
+    rows.push([String(guid), t.name, decks[did] || '', String(tags || '').trim()].concat(f));
+  });
+  const media = new Map(), mf = zip.file('media');
+  if (mf) {
+    const u = await unz(await mf.async('uint8array'));
+    const txt = new TextDecoder().decode(u.subarray(0, 1)).trim();
+    if (txt === '{') { const o = JSON.parse(new TextDecoder().decode(u)); Object.keys(o).forEach(k => media.set(o[k], k)); }
+    else pbMedia(u).forEach((e, i) => { if (e.name) media.set(e.name, String(e.zip != null ? e.zip : i)); });
+  }
+  return { rows, colsByType, media, zip };
+}
+async function loadApkg(file) {
+  const box = document.getElementById('mapArea');
+  box.innerHTML = `<p class="small muted" style="margin-top:14px"><span class="spin"></span>Opening ${esc(file.name)}…</p>`;
+  let A;
+  try { A = await readApkg(file); }
+  catch (e) { box.innerHTML = `<p class="warn-note small" style="margin-top:14px">Couldn't open ${esc(file.name)}: ${esc(e.message || String(e))}</p>`; return; }
+  if (!A.rows.length) { box.innerHTML = ''; return toast('No notes found in that deck.', true); }
+  const types = {};
+  A.rows.forEach(r => { types[r[1]] = (types[r[1]] || 0) + 1; });
+  const typeNames = Object.keys(types).sort((a, b) => types[b] - types[a]);
+  S.imp = { file: file.name, meta: { sep: '\t', guid: 0, notetype: 1, deck: 2, tags: 3 }, allRows: A.rows, types, type: typeNames[0], colsByType: A.colsByType,
+    subjMode: 'deck', deckLevel: Math.min(2, String(A.rows[0][2] || '').split('::').length), fixed: '', apkg: { zip: A.zip, media: A.media } };
+  setType(S.imp.type);
+}
+const MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', tif: 'image/tiff', tiff: 'image/tiff',
+  mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', ogv: 'video/ogg', mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg', flac: 'audio/flac', aac: 'audio/aac' };
+const mimeOf = n => MIME[(String(n).split('.').pop() || '').toLowerCase()] || 'application/octet-stream';
+function b64of(u) { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
+async function uploadApkgMedia(names, say) {
+  const A = S.imp.apkg, dec = n => { try { return decodeURIComponent(n); } catch (e) { return n; } };
+  const want = [], missing = [];
+  names.forEach(n => { const k = A.media.has(n) ? n : A.media.has(dec(n)) ? dec(n) : null; const z = k && A.zip.file(A.media.get(k)); z ? want.push([n, z]) : missing.push(n); });
+  const res = { saved: 0, had: 0, missing, big: [] };
+  if (!want.length) return res;
+  const have = new Set(await run('mediaHave', want.map(x => x[0])));
+  res.had = have.size;
+  const todo = want.filter(x => !have.has(x[0]));
+  let batch = [], size = 0, done = 0;
+  const flush = async () => { if (!batch.length) return; const r = await run('saveMedia', batch); res.saved += r.saved; res.folderId = r.folderId; batch = []; size = 0; };
+  for (const [name, z] of todo) {
+    if (z.size > 20e6) { done++; res.big.push(name); continue; }
+    const u = await unz(await z.async('uint8array'));
+    done++;
+    if (u.length > 20e6) { res.big.push(name); continue; }
+    const b = b64of(u);
+    if (size + b.length > 6e6) await flush();
+    batch.push({ name, mime: mimeOf(name), b64: b }); size += b.length;
+    say(`Saving pictures & videos to Drive: ${done} of ${todo.length}…`);
+  }
+  await flush();
+  if (res.folderId) { S.boot.settings.MediaFolderId = res.folderId; S.media = {}; }
+  return res;
+}
+async function loadAnkiMany(list) {
+  const files = [...(list || [])];
+  if (files.length <= 1) return loadAnki(files[0]);
+  const box = document.getElementById('mapArea'), log = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    S.imp = null;
+    try { await loadAnki(f); } catch (e) { S.imp = null; }
+    if (!S.imp) { log.push(`✗ ${esc(f.name)}: couldn't open it`); continue; }
+    box.insertAdjacentHTML('afterbegin', `<div class="ok-note small" style="margin-top:14px"><b>Importing deck ${i + 1} of ${files.length}. Keep this tab open.</b>${log.length ? '<br>' + log.join('<br>') : ''}</div>`);
+    let r = null;
+    try { r = await doImport(); } catch (e) { }
+    const up = r && r.up;
+    log.push(r ? `✓ ${esc(f.name)}: ${r.added} new, ${r.updated} updated${!S.withMedia ? '; questions only' : up ? (up.error ? '; pictures/videos stopped partway (import this deck again to finish)' : `; ${up.saved} pictures/videos saved${up.big.length ? `, ${up.big.length} over 20 MB skipped` : ''}`) : ''}` : `✗ ${esc(f.name)}: import stopped`);
+  }
+  S.imp = null;
+  box.innerHTML = `<div class="ok-note" style="margin-top:14px"><b>Finished importing ${files.length} decks.</b><br>${log.join('<br>')}</div>`;
+  S.boot = await run('getBootstrap');
+}
+async function loadAnki(file) {
+  if (!file) return;
+  if (/\.(apkg|colpkg)$/i.test(file.name)) return loadApkg(file);
+  S.imp = null;
+  const text = await file.text();
+  const { meta, rows } = parseAnki(text);
+  if (!rows.length) return toast('No notes found in that file.', true);
+  const types = {};
+  if (meta.notetype != null) rows.forEach(r => { const t = r[meta.notetype] || '(none)'; types[t] = (types[t] || 0) + 1; });
+  const typeNames = Object.keys(types).sort((a, b) => types[b] - types[a]);
+  S.imp = { file: file.name, meta, allRows: rows, types, type: typeNames[0] || null, subjMode: meta.deck != null ? 'deck' : 'fixed', deckLevel: 2, fixed: '' };
+  setType(S.imp.type);
+}
+function impRows() { const I = S.imp; return I.type == null ? I.allRows : I.allRows.filter(r => (r[I.meta.notetype] || '(none)') === I.type); }
+function setType(t) { const I = S.imp; I.type = t; if (I.colsByType) I.meta.columns = I.colsByType[t]; I.roles = autoMap(I.meta, impRows()); drawMapping(); }
+
+function drawMapping() {
+  const I = S.imp, rows = impRows(), n = I.roles.length;
+  const deckEx = I.meta.deck != null ? (rows[0][I.meta.deck] || '') : '';
+  const deckParts = deckEx.split('::');
+  const built = buildItems(rows.slice(0, 200));
+  const stats = { noAns: built.filter(x => !x.answer).length, fewCh: built.filter(x => x.choices.filter(Boolean).length < 2).length };
+  const ex = built.find(x => x.choices.filter(Boolean).length >= 2) || built[0];
+  document.getElementById('mapArea').innerHTML = `
+   <p class="ok-note small" style="margin-top:14px">Loaded <b>${esc(I.file)}</b>: ${I.allRows.length} notes${Object.keys(I.types).length > 1 ? ` in ${Object.keys(I.types).length} note types` : ''}${I.apkg ? `, with ${I.apkg.media.size} pictures/videos inside` : ''}</p>
+   ${Object.keys(I.types).length > 1 ? `<div class="field"><label>Note type to import <span class="muted small">(each type has its own field layout — import them one at a time)</span></label><select class="inp" style="max-width:420px" onchange="setType(this.value)">${Object.keys(I.types).map(t => `<option ${t === I.type ? 'selected' : ''} value="${esc(t)}">${esc(t)} (${I.types[t]} notes)</option>`).join('')}</select></div>` : ''}
+   <div class="field"><label>What is in each column?</label>
+   <table class="map"><tr><th>#</th><th>Field</th><th>Sample from your cards</th></tr>
+   ${Array.from({ length: n }, (_, i) => `<tr><td>${i + 1}${I.meta.columns && I.meta.columns[i] ? `<div class="small muted">${esc(I.meta.columns[i])}</div>` : ''}</td>
+     <td><select class="inp" style="width:210px" onchange="S.imp.roles[${i}]=this.value;drawMapping()">${ROLES.map(([k, l]) => `<option value="${k}" ${I.roles[i] === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+     <td>${rows.slice(0, 2).map(r => `<div class="sample">${esc(strip(r[i] || '').slice(0, 160)) || '<i>(empty)</i>'}</div>`).join('')}</td></tr>`).join('')}
+   </table></div>
+   <div class="field"><label>Subject comes from</label>
+     <div class="row"><div class="seg">${(I.meta.deck != null ? [['deck', 'Deck name']] : []).concat([['column', 'A mapped column'], ['fixed', 'Type it']]).map(([k, l]) => `<button class="${I.subjMode === k ? 'on' : ''}" onclick="S.imp.subjMode='${k}';drawMapping()">${l}</button>`).join('')}</div>
+     ${I.subjMode === 'deck' ? `<select class="inp" style="width:auto" onchange="S.imp.deckLevel=+this.value;drawMapping()">${deckParts.map((p, i) => `<option value="${i + 1}" ${I.deckLevel === i + 1 ? 'selected' : ''}>Level ${i + 1}: ${esc(p)}</option>`).join('')}</select>
+        <span class="muted small">Deck: ${esc(deckEx)}. The next level becomes the Topic. Names are matched to the 12 PLE subjects (e.g. "Pharma" becomes Pharmacology and Therapeutics).</span>` : ''}
+     ${I.subjMode === 'fixed' ? `<input class="inp" style="max-width:260px" placeholder="e.g. Pharmacology" value="${esc(I.fixed)}" onchange="S.imp.fixed=this.value;drawMapping()">` : ''}
+     ${I.subjMode === 'column' && !I.roles.includes('subject') ? '<span class="lo small">Set one column to “Subject” above.</span>' : ''}</div></div>
+   <div class="field"><label>Preview of the first card</label>
+     <div class="card" style="background:#FBFCFE"><div class="row small muted" style="margin-bottom:8px"><span class="pill">${esc(ex.subject)}</span>${esc(ex.topic)}<span>Answer: <b>${esc(ex.answer || '?')}</b></span></div>
+     ${questionBlock({ ...ex, choices: ex.choices.map((h, i) => ({ key: L5[i], html: h })).filter(c => c.html) }, { reveal: true })}</div></div>
+   ${stats.noAns || stats.fewCh ? `<p class="warn-note small">In the first ${built.length} cards: ${stats.noAns ? `<b>${stats.noAns}</b> have no answer key I could read` : ''}${stats.noAns && stats.fewCh ? ', and ' : ''}${stats.fewCh ? `<b>${stats.fewCh}</b> have fewer than 2 choices (these are skipped)` : ''}. Check which column is set as the answer.</p>` : '<p class="ok-note small">Answers and choices look good in the first ' + built.length + ' cards.</p>'}
+   <button class="btn" id="impBtn" onclick="doImport()">Import ${rows.length} questions</button>
+   <div id="impProg"></div>`;
+  hydrate(document.getElementById('mapArea'));
+}
+
+function splitChoices(html) {
+  const lines = String(html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(div|p|li)>/gi, '\n').replace(/<(div|p|li|ol|ul)\b[^>]*>/gi, '\n').replace(/<\/(ol|ul)>/gi, '\n').split('\n');
+  const stem = [], ch = {}, tail = []; let cur = null, ended = false;
+  for (const ln of lines) {
+    const t = strip(ln), m = t.match(/^\(?([A-Ea-e])[\.\):]\s*(.+)$/);
+    if (!ended && m && (cur ? m[1].toUpperCase().charCodeAt(0) === cur.charCodeAt(0) + 1 : m[1].toUpperCase() === 'A')) {
+      cur = m[1].toUpperCase(); ch[cur] = ln.replace(/^((?:\s|<[^>]+>)*)\(?[A-Ea-e][\.\):]\s*/, '$1');
+    } else if (cur && /^(answer|ans|correct)\b/i.test(t)) { ended = true; tail.push(ln); }
+    else if (cur && !ended) { if (t) ch[cur] += ' ' + ln; }
+    else if (ended) tail.push(ln);
+    else stem.push(ln);
+  }
+  return { stem: stem.filter(s => strip(s) || /<img|\[sound:/i.test(s)).join('<br>'), choices: L5.map(L => (ch[L] || '').trim()), tail: tail.join(' ') };
+}
+
+function normAnswer(raw, choices) {
+  const t = strip(raw); if (!t) return '';
+  let m;
+  if ((m = t.match(/^\(?([A-Ea-e])\)?\.?$/))) return m[1].toUpperCase();
+  if (/^[01]([\s,]+[01]){1,5}$/.test(t)) { const b = t.split(/[\s,]+/); if (b.filter(x => x === '1').length === 1) return L5[b.indexOf('1')]; }
+  if (/^[1-5]$/.test(t)) return L5[+t - 1];
+  if ((m = t.match(/^(?:the\s+)?(?:correct\s+)?(?:answer|ans)\s*(?:is)?\s*[:\-]?\s*\(?([A-E])\b/i))) return m[1].toUpperCase();
+  if ((m = t.match(/^\(?([A-E])[\.\)]\s/))) return m[1];
+  const nz = s => strip(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const nt = nz(t);
+  let i = choices.findIndex(c => c && nz(c) === nt); if (i >= 0) return L5[i];
+  i = choices.findIndex(c => c && nz(c).length > 3 && nt.startsWith(nz(c))); if (i >= 0) return L5[i];
+  return '';
+}
+
+function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return 'h' + (h >>> 0).toString(36); }
+
+function buildItems(rows) {
+  const I = S.imp, R_ = I.roles;
+  return rows.map(r => {
+    const get = role => R_.map((x, i) => x === role ? (r[i] || '') : null).filter(x => x != null && x.trim() !== '');
+    let question = get('question').join('<br>');
+    let choices = L5.map(L => get(L).join(' ').trim());
+    let tail = '';
+    if (R_.includes('choices')) { const p = splitChoices(get('choices').join('<br>')); choices = p.choices; tail = p.tail; }
+    if (choices.filter(Boolean).length < 2) { const p = splitChoices(question); if (p.choices.filter(Boolean).length >= 2) { question = p.stem; choices = p.choices; tail = p.tail; } }
+    const ansRaw = get('answer').join(' ');
+    let rationale = [...get('rationale'), ...get('extra')].filter(x => strip(x) || /<img|\[sound:/i.test(x)).join('<hr>');
+    let answer = normAnswer(ansRaw, choices) || normAnswer(tail, choices);
+    if (!answer && rationale) { const m = strip(rationale).match(/(?:correct answer|answer|ans)\s*(?:is)?\s*[:\-]?\s*\(?([A-E])\b/i); if (m) answer = m[1].toUpperCase(); }
+    if (strip(ansRaw).length > 40 || /<img|\[sound:/i.test(ansRaw)) rationale = ansRaw + (rationale ? '<hr>' + rationale : '');
+    const deck = I.meta.deck != null ? String(r[I.meta.deck] || '').split('::') : [];
+    let subject = 'Uncategorized', topic = get('topic').map(strip).join(', ');
+    if (I.subjMode === 'deck' && deck.length) { subject = deck[Math.min(I.deckLevel, deck.length) - 1]; if (!topic && deck[I.deckLevel]) topic = deck.slice(I.deckLevel).join(' › '); }
+    else if (I.subjMode === 'column') subject = get('subject').map(strip).join(', ') || 'Uncategorized';
+    else if (I.subjMode === 'fixed') subject = I.fixed.trim() || 'Uncategorized';
+    const guid = get('guid')[0] || hash(strip(question) + '|' + choices.map(strip).join('|'));
+    return { guid, subject: pleName(subject.trim()) || subject.trim(), topic, question, choices, answer, rationale, tags: get('tags').join(' '), deck: deck.join('::') };
+  });
+}
+
+function mediaRefs(items) {
+  const set = new Set();
+  const scan = h => {
+    String(h || '').replace(/<(?:img|source|video|audio)\b[^>]*\ssrc\s*=\s*(["'])(.*?)\1/gi, (m, q, s) => { if (!/^(https?:|data:)/i.test(s)) { _ta.innerHTML = s; set.add(_ta.value); } return m; })
+      .replace(/\[sound:([^\]]+)\]/g, (m, s) => { set.add(s); return m; });
+  };
+  items.forEach(it => { scan(it.question); it.choices.forEach(scan); scan(it.rationale); });
+  return [...set];
+}
+
+async function doImport() {
+  const items = buildItems(impRows()).filter(x => x.choices.filter(Boolean).length >= 2);
+  if (!items.length) return toast('Nothing to import — check the mapping.', true);
+  const btn = document.getElementById('impBtn'), box = document.getElementById('impProg');
+  btn.disabled = true;
+  box.innerHTML = '<div class="prog"><i id="impBar"></i></div><div class="small muted" id="impTxt"></div>';
+  let added = 0, updated = 0, truncated = 0;
+  const CH = 150;
+  for (let i = 0; i < items.length; i += CH) {
+    try {
+      const r = await run('importRows', items.slice(i, i + CH));
+      added += r.added; updated += r.updated; truncated += r.truncated;
+    } catch (e) { btn.disabled = false; return; }
+    document.getElementById('impBar').style.width = Math.min(100, (i + CH) / items.length * 100) + '%';
+    document.getElementById('impTxt').textContent = `Saved ${Math.min(i + CH, items.length)} of ${items.length}…`;
+  }
+  let tg = { tagged: 0 }; try { tg = await run('tosAutoTag'); } catch (e) { }
+  S.boot = await run('getBootstrap');
+  const media = mediaRefs(items);
+  let up = null;
+  if (S.imp.apkg && media.length && S.withMedia) {
+    document.getElementById('impBar').style.width = '0%';
+    try { up = await uploadApkgMedia(media, t => { document.getElementById('impTxt').textContent = t; }); }
+    catch (e) { up = { error: true }; }
+  }
+  const mediaNote = up ? (up.error ? `<p class="warn-note small">The questions were saved, but saving the pictures & videos stopped partway. Click Import again to finish; files already saved are skipped.</p>`
+    : `<p class="ok-note small">Pictures & videos: <b>${up.saved}</b> saved to your Drive${up.had ? `, ${up.had} were already there` : ''}.${up.missing.length ? ` ${up.missing.length} referenced by the cards weren't in the .apkg.` : ''}${up.big.length ? ` ${up.big.length} over 20 MB were skipped; upload them to the media folder yourself and click Re-index: ${esc(up.big.join(', '))}.` : ''}</p>`) : (S.imp.apkg && media.length ? `<p class="small muted">${media.length} pictures/videos were not saved (questions only). Tick “Also save pictures & videos” and import this deck again to add them.</p>` : '');
+  box.innerHTML = mediaNote + `<p class="ok-note">Done: <b>${added}</b> new, <b>${updated}</b> updated${truncated ? `, ${truncated} very long fields trimmed` : ''}. Re-importing the same deck later updates cards instead of duplicating them. ${tg.tagged} were matched to Table of Specifications areas by keywords; tag the rest in Results & Analytics.</p>
+   ${S.imp.apkg ? '' : media.length ? `<div class="field"><label>${media.length} media files used by these cards</label><p class="small muted" style="margin-top:0">Upload these from <b>collection.media</b> to your Drive media folder (step 3), then click Re-index.</p><textarea class="code" readonly onclick="this.select()">${esc(media.join('\n'))}</textarea></div>` : '<p class="small muted">These cards don\'t use any pictures or videos.</p>'}`;
+  btn.disabled = false;
+  return { added, updated, up };
+}
+
+/* ================= Boot ================= */
+function setWho() {
+  const st = S.boot.settings || {}, name = st.DisplayName || (S.boot.email ? S.boot.email.split('@')[0] : 'Doctor');
+  document.getElementById('whoName').textContent = name;
+  document.getElementById('avatar').textContent = name.replace(/^dr\.?\s*/i, '').split(/[\s._]+/).map(w => w[0] || '').join('').slice(0, 2).toUpperCase() || 'DR';
+}
+(async function init() {
+  view.innerHTML = loading();
+  S.boot = await run('getBootstrap');
+  setWho();
+  go(S.boot.subjects.length ? 'dashboard' : 'import');
+})();
+</script>

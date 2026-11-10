@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <div class="app">
+    <aside class="side" id="side">
+      <div class="brand"><span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13h4l2.5-6 4 11 3-8 1.5 3H22"/></svg></span>BetterMed</div>
+      <nav id="nav"></nav>
+      <div class="side-foot" id="sideFoot"></div>
+    </aside>
+    <main class="main">
+      <header class="top">
+        <button class="menu-btn" onclick="document.body.classList.toggle('nav-open')" aria-label="Menu">&#9776;</button>
+        <div>
+          <h1 id="title"></h1>
+          <div class="eyebrow" id="eyebrow"></div>
+        </div>
+        <label class="searchbox"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="topSearch" placeholder="Search your questions" onkeydown="if(event.key==='Enter'){S.bank={page:0,search:this.value,subject:''};go('bank')}"></label>
+        <button class="iconbtn" title="AI Tutor" onclick="go('ai')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg></button>
+        <div class="who"><span class="avatar" id="avatar">DR</span><span id="whoName">Doctor</span></div>
+      </header>
+      <section id="view"></section>
+    </main>
+  </div>
+  <div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()"><div class="modal-box" id="modalBox"></div></div>
+  <div id="toast"></div>
+  <?!= include('JavaScript'); ?>
+</body>
+</html>
